@@ -232,22 +232,16 @@ auto Engine::evaluate_function(FunctionTask& task) -> void {
   }
 
   int num_outputs = outputs.size();
+  std::lock_guard<std::mutex> lock(task.base->mutex);
   for (int i = 0; i < num_outputs; ++i) {
     auto& output = outputs[i];
     auto& next_fn = fn.next_functions[i].first;
     int input_nr = fn.next_functions[i].second;
 
-    if (!next_fn) {
+    if (!next_fn || !next_fn->is_executable) {
       continue;
     }
 
-    // Stochastic functions are placed in the ready queue by
-    // compute_dependencies, so we have to skip them here.
-    if (next_fn->is_stochastic || !next_fn->is_executable) {
-      continue;
-    }
-
-    std::lock_guard<std::mutex> lock(task.base->mutex);
     // Check if the next function is ready to be computed
     bool is_ready = false;
     auto& dependencies = task.base->dependencies;
@@ -285,29 +279,6 @@ auto Engine::evaluate_function(FunctionTask& task) -> void {
   }
 }
 
-/** Finds all stochastic functions and appends them to the queue */
-auto Engine::find_stochastic_functions(function_queue& queue, Function* graph_root, GraphTask& task) -> void {
-  std::unordered_set<Function*> seen {graph_root};
-  function_queue search_queue {graph_root};
-  while (search_queue.size() > 0) {
-    auto fn = search_queue.back(); search_queue.pop_back();
-    for (auto& next_fn_pair : fn->next_functions) {
-      auto& next_fn = next_fn_pair.first;
-      Function* next_ptr = next_fn.get();
-      if (!next_ptr) continue;
-      if (next_ptr->is_stochastic && next_ptr->is_executable && seen.count(next_ptr) == 0) {
-        ready_queue(-1).push_front(FunctionTask(&task, next_fn, InputBuffer(0)));
-        queue.push_back(next_ptr);
-        task.has_any_work = true;
-      }
-      if (seen.count(next_ptr) == 0) {
-        seen.insert(next_ptr);
-        search_queue.push_back(next_ptr);
-      }
-    }
-  }
-}
-
 /** Computes the number of dependencies for each function which requires grad */
 auto Engine::compute_dependencies(function_queue queue, GraphTask& task) -> void {
   // Just to make sure that they will never be added to the queue again
@@ -322,7 +293,6 @@ auto Engine::compute_dependencies(function_queue queue, GraphTask& task) -> void
       Function* next_ptr = next_fn_pair.first.get();
       if (!next_ptr) continue;
       if (!next_ptr->is_executable) continue;
-      if (next_ptr->is_stochastic) continue; // Stochastic nodes were in the queue already
       dependencies[next_ptr] += 1;
       if (seen.count(next_ptr) == 0) {
         seen.insert(next_ptr);
@@ -371,9 +341,6 @@ auto Engine::execute(const function_list& input_roots,
       break;
     }
   }
-
-  // Search the graph and find all stochastic functions. Append them to the queue.
-  find_stochastic_functions(roots, graph_root.get(), graph_task);
 
   if (!graph_task.has_any_work) {
     throw std::runtime_error(
