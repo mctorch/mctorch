@@ -64,7 +64,6 @@ struct GraphTask {
   std::atomic_bool has_error;
   std::atomic<uint64_t> outstanding_tasks;
   bool keep_graph;
-  bool has_any_work;
 
   std::mutex mutex;
   // Notified when a task finishes executing.  Check outstanding_tasks to see
@@ -76,20 +75,21 @@ struct GraphTask {
   std::unordered_map<Function*, int> dependencies;
 
   int owner;
+  ReadyQueue *queue_override;
 
   GraphTask(bool keep_graph, const Engine::pre_callback_map& pre_callbacks, const Engine::post_callback_map& post_callbacks)
     : exception()
     , has_error(false)
     , outstanding_tasks(0)
     , keep_graph(keep_graph)
-    , has_any_work(false)
     , mutex()
     , not_done()
     , pre_callbacks(pre_callbacks)
     , post_callbacks(post_callbacks)
     , not_ready()
     , dependencies()
-    , owner(NO_DEVICE) {}
+    , owner(NO_DEVICE)
+    , queue_override(nullptr) {}
 };
 
 auto ReadyQueue::push_front(FunctionTask item) -> void {
@@ -261,7 +261,7 @@ auto Engine::evaluate_function(FunctionTask& task) -> void {
       InputBuffer input_buffer(next_fn->num_inputs);
       input_buffer.add(input_nr, std::move(output));
       if (is_ready) {
-        auto& queue = ready_queue(input_buffer.device());
+        auto& queue = queue_for_task(task, input_buffer);
         queue.push_front(FunctionTask(task.base, next_fn, std::move(input_buffer)));
       } else {
         not_ready.emplace(next_fn.get(), std::move(input_buffer));
@@ -271,7 +271,7 @@ auto Engine::evaluate_function(FunctionTask& task) -> void {
       auto &input_buffer = not_ready_it->second;
       input_buffer.add(input_nr, std::move(output));
       if (is_ready) {
-        auto& queue = ready_queue(input_buffer.device());
+        auto& queue = queue_for_task(task, input_buffer);
         queue.push_front(FunctionTask(task.base, next_fn, std::move(input_buffer)));
         not_ready.erase(not_ready_it);
       }
@@ -279,27 +279,36 @@ auto Engine::evaluate_function(FunctionTask& task) -> void {
   }
 }
 
-/** Computes the number of dependencies for each function which requires grad */
-auto Engine::compute_dependencies(function_queue queue, GraphTask& task) -> void {
-  // Just to make sure that they will never be added to the queue again
-  std::unordered_set<Function*> seen(queue.begin(), queue.end());
+auto Engine::queue_for_task(FunctionTask& task, InputBuffer& buffer) -> ReadyQueue& {
+  if (task.base->queue_override) return *task.base->queue_override;
+  return ready_queue(buffer.device());
+}
 
-  // Queue contains all nodes that will start propagating gradients.
-  // We no longer have to expand functions that don't require grad.
+/** Computes the number of dependencies for each function which requires grad */
+auto Engine::compute_dependencies(std::shared_ptr<Function>& root, GraphTask& task) -> bool {
+  // Just to make sure that they will never be added to the queue again
+  std::array<int, 1 + 16> device_buckets;
+  if (get_num_devices() > device_buckets.size())
+    throw std::runtime_error("More devices than buckets. File a bug report");
+  for (int i = 0; i < get_num_devices(); i++) device_buckets[i] = 0;
+
+  function_queue queue { root.get() };
+  std::unordered_set<Function*> seen { root.get() };
   auto& dependencies = task.dependencies;
   while (queue.size() > 0) {
     auto fn = std::move(queue.back()); queue.pop_back();
     for (auto& next_fn_pair : fn->next_functions) {
       Function* next_ptr = next_fn_pair.first.get();
-      if (!next_ptr) continue;
-      if (!next_ptr->is_executable) continue;
+      if (!next_ptr || !next_ptr->is_executable) continue;
       dependencies[next_ptr] += 1;
+      device_buckets[0]++; // TODO: use device of a function
       if (seen.count(next_ptr) == 0) {
         seen.insert(next_ptr);
         queue.push_back(next_ptr);
       }
     }
   }
+  return false;
 }
 
 struct ClearCallbacks {
@@ -329,37 +338,43 @@ auto Engine::execute(const function_list& input_roots,
 
   GraphTask graph_task(keep_graph, pre_callbacks, post_callbacks);
 
-  std::unique_lock<std::mutex> lock(graph_task.mutex);
-
-  auto graph_root = std::make_shared<GraphRoot>(input_roots, inputs);
-  function_queue roots;
-  for (auto entry : input_roots) {
-    if (entry.first->is_executable) {
-      graph_task.has_any_work = true;
-      roots.push_back(graph_root.get());
-      ready_queue(-1).push_front(FunctionTask(&graph_task, graph_root, InputBuffer(0)));
-      break;
-    }
-  }
-
-  if (!graph_task.has_any_work) {
+  auto is_executable = [](const edge_type& e) { return e.first->is_executable; };
+  if (!std::any_of(input_roots.begin(), input_roots.end(), is_executable)) {
     throw std::runtime_error(
       "there are no graph nodes that require computing gradients");
   }
 
-  // Now compute the dependencies for all executable functions
-  compute_dependencies(std::move(roots), graph_task);
+  // Compute the dependencies for all executable functions
+  std::shared_ptr<Function> graph_root = std::make_shared<GraphRoot>(input_roots, inputs);
+  bool multithreaded = compute_dependencies(graph_root, graph_task);
 
-  // Not a worker
-  if (worker_device == NO_DEVICE) {
-    // Wait for all tasks to complete
-    graph_task.not_done.wait(lock, [&graph_task]{
-      return graph_task.outstanding_tasks.load() == 0;
-    });
+  if (multithreaded) {
+    std::unique_lock<std::mutex> lock(graph_task.mutex);
+    auto& queue = ready_queue(worker_device != NO_DEVICE ? worker_device : -1);
+    queue.push_front(FunctionTask(&graph_task, graph_root, InputBuffer(0)));
+    if (worker_device == NO_DEVICE) {
+      // Not a worker. Wait for all tasks to complete
+      graph_task.not_done.wait(lock, [&graph_task]{
+        return graph_task.outstanding_tasks.load() == 0;
+      });
+    } else {
+      graph_task.owner = worker_device;
+      lock.unlock();
+      thread_main(&graph_task);
+    }
   } else {
-    graph_task.owner = worker_device;
-    lock.unlock();
-    thread_main(&graph_task);
+    // Graph is small or simple. There's no point in paying the threading overhead.
+    ReadyQueue queue;
+    queue.push_front(FunctionTask(&graph_task, graph_root, InputBuffer(0)));
+    graph_task.queue_override = &queue;
+    uint64_t num_tasks = 1;
+    AutoGPU gpu_guard;
+    while (num_tasks > 0) {
+      FunctionTask task = queue.pop_back();
+      gpu_guard.setDevice(task.inputs.device());
+      evaluate_function(task);
+      num_tasks = --task.base->outstanding_tasks;
+    }
   }
 
   // Check for an exception while running backwards
@@ -391,7 +406,7 @@ auto Engine::ready_queue(int device) -> ReadyQueue& {
   return *ready_queues.at(device + 1);
 }
 
-auto Engine::start_threads() -> void {
+auto Engine::get_num_devices() -> int {
   int num_devices = 0;
 #ifdef WITH_CUDA
   // check for case of compiled with CUDA but no available devices
@@ -400,8 +415,12 @@ auto Engine::start_threads() -> void {
     num_devices = 0;
   }
 #endif
+  return num_devices + 1; // +1 for CPU
+}
+
+auto Engine::start_threads() -> void {
   // One for CPU, plus one for every GPU device
-  int num_threads = num_devices + 1;
+  int num_threads = get_num_devices();
   ready_queues = std::vector<std::shared_ptr<ReadyQueue>>(num_threads);
   for (auto& queue : ready_queues)
     queue.reset(new ReadyQueue());

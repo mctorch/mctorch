@@ -51,9 +51,11 @@ protected:
       const function_list& roots,
       variable_list& inputs,
       GraphTask& task);
-  void compute_dependencies(function_queue queue, GraphTask& task);
+  bool compute_dependencies(std::shared_ptr<Function>& graph_root, GraphTask& task);
   void evaluate_function(FunctionTask& task);
+  int get_num_devices();
   ReadyQueue& ready_queue(int device);
+  ReadyQueue& queue_for_task(FunctionTask& task, InputBuffer& buffer);
   void start_threads();
   virtual void thread_init(int device);
   virtual void thread_main(GraphTask *task);
