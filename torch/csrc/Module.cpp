@@ -19,6 +19,7 @@
 #include "torch/csrc/jit/python_tracer.h"
 #include "torch/csrc/jit/init.h"
 #include "torch/csrc/jit/python_ir.h"
+#include "torch/csrc/nn/Module.h"
 
 #ifdef WITH_CUDNN
 #include "cudnn/Module.h"
@@ -831,6 +832,7 @@ static PyObject* initModule() {
   torch::autograd::initAutogradClosureBindings(module);
   torch::jit::initJITBindings(module);
   torch::autograd::initNNFunctions(module);
+  torch::nn::initPythonModule(module);
   ASSERT_TRUE(THPDoubleStorage_init(module));
   ASSERT_TRUE(THPFloatStorage_init(module));
   ASSERT_TRUE(THPHalfStorage_init(module));

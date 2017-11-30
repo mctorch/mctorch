@@ -434,6 +434,7 @@ main_sources = [
     "torch/csrc/utils/tuple_parser.cpp",
     "torch/csrc/allocators.cpp",
     "torch/csrc/serialization.cpp",
+    "torch/csrc/nn/Module.cpp",
     "torch/csrc/jit/init.cpp",
     "torch/csrc/jit/interpreter.cpp",
     "torch/csrc/jit/ir.cpp",

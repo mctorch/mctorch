@@ -20,7 +20,7 @@ def _addindent(s_, numSpaces):
     return s
 
 
-class Module(object):
+class Module(torch._C.ModuleBase):
     r"""Base class for all neural network modules.
 
     Your models should also subclass this class.
@@ -47,14 +47,27 @@ class Module(object):
 
     dump_patches = False
 
+    def __new__(cls, *args, **kwargs):
+        self = super(Module, cls).__new__(cls, *args, **kwargs)
+        # So pybind isn't particularily friendly in its __init__ semantics -
+        # if you forget to call it, you won't ever construct your object, and
+        # it's likely that you'll silently be accessing uninitialized memory.
+        # This is terrible, and we don't want people to get segfaults just because
+        # they forgot to call super __init__ (we do the checks, but if the memory is
+        # uninitialized, the checks are likely to segfault...). To get around this,
+        # call __init__ in here. If someone overrides __new__ and forgets to call
+        # super then that's their problem...
+        torch._C.ModuleBase.__init__(self)
+        return self
+
     def __init__(self):
         self._backend = thnn_backend
-        self._parameters = OrderedDict()
-        self._buffers = OrderedDict()
+        # self._parameters = OrderedDict()
+        # self._buffers = OrderedDict()
         self._backward_hooks = OrderedDict()
         self._forward_hooks = OrderedDict()
         self._forward_pre_hooks = OrderedDict()
-        self._modules = OrderedDict()
+        # self._modules = OrderedDict()
         self.training = True
 
     def forward(self, *input):
@@ -344,7 +357,12 @@ class Module(object):
                     grad_fn.register_hook(wrapper)
         return result
 
-    def __setstate__(self, state):
+    def __getstate__(self):
+        return (torch._C.ModuleBase.__getstate__(self), self.__dict__)
+
+    def __setstate__(self, full_state):
+        super_state, state = full_state
+        torch._C.ModuleBase.__setstate__(self, super_state)
         self.__dict__.update(state)
         if '_forward_pre_hooks' not in self.__dict__:
             self._forward_pre_hooks = OrderedDict()
