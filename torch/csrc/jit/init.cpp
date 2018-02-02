@@ -12,7 +12,7 @@
 #include "torch/csrc/jit/passes/peephole.h"
 #include "torch/csrc/jit/passes/canonicalize.h"
 #include "torch/csrc/jit/passes/onnx/peephole.h"
-
+#include "torch/csrc/jit/script/init.h"
 
 
 namespace torch  { namespace jit {
@@ -64,6 +64,7 @@ void initJITBindings(PyObject *module) {
   initPythonIRBindings(module);
   initPythonTracerBindings(module);
   python::initCompilerMixin(module);
+  script::initJitScriptBindings(module);
 }
 
 }}
