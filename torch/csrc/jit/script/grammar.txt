@@ -1,0 +1,80 @@
+-- List<T> is really a Tree with kind TK_LIST and elements as subtrees
+-- Maybe<T> is really either a Tree with kind TK_OPTION or T
+-- Builtin Tree types are: String, Number (stores a double), Bool
+
+-- NB: size_symbols can be empty
+Type  = TensorType(ScalarType scalar_type, List<Ident> size_symbols)
+
+Param = Param(Type type, Ident name)
+
+-- TODO: consider anonymous returns?
+Def   = Def(Ident name, List<Param> params, List<Param> returns, List<Stmt> body)
+
+Stmt  = If(Expr cond, List<Stmt> true_body, List<Stmt> false_body)
+      | While(Expr cond, List<Stmt> body)
+      | Global(List<Ident> idents)
+      | Assign(List<Expr> lhs, AssignType maybe_reduce, Expr rhs)
+        -- this is not a constructor, consider this a 'macro'
+        -- any expression can appear where a statement appears
+        -- TODO: consider adding ExprStmt to have a well-typed AST?
+      | Expr
+
+-- NB: listed in the order of precedence
+Expr  =
+      ---------------------------------------------------------
+      -- Operators
+      ---------------------------------------------------------
+      TernaryIf(
+      -- precedence: 2
+      | And(Expr lhs, Expr rhs)
+      | Or(Expr lhs, Expr rhs)
+      -- precedence: 3
+      | Not(Expr expr)
+      -- precedence: 4
+      | '<'(Expr lhs, Expr rhs)
+      | '>'(Expr lhs, Expr rhs)
+      | Eq(Expr lhs, Expr rhs)
+      | Le(Expr lhs, Expr rhs)
+      | Ge(Expr lhs, Expr rhs)
+      | Ne(Expr lhs, Expr rhs)
+      -- precedence: 5
+      | '+'(Expr lhs, Expr rhs)
+      | '-'(Expr lhs, Expr rhs)
+      -- precedence: 6
+      | '*'(Expr lhs, Expr rhs)
+      | '/'(Expr lhs, Expr rhs)
+      -- precedence: 7
+      | '-'(Expr expr)       -- NB: yes, constructor '-' is overloaded for unary minus too
+      ---------------------------------------------------------
+      -- Non-operator expressions (have even higher precedence)
+      ---------------------------------------------------------
+      -- * is one of  |   Number  | Bool |
+      --              +-----------+------+
+      -- type is then | "i" | "f" |  "b" |
+      | Const(* value, String type)
+      | Cast(CastType type, Expr expr)
+      -- NB: x.name(y) is desugared into name(x, y)
+      -- TODO: what if names repeat??
+      | Apply(Ident name, List<Expr> args, List<Attribute> kwargs)
+      | Select(Expr base, Ident attr_name)
+      | Slice(Expr value, Maybe<Expr> first, Maybe<Expr> second)
+      | Ident               -- Yes, regular identifiers are expressions too...
+
+-- NB: only allowed expressions are Const or List(Const) (List as a value, not type constructor)
+Attribute = Attribute(Ident name, Expr value)
+
+AssignType = '='
+           | TK_PLUS_EQ
+           | TK_MINUS_EQ
+           | TK_TIMES_EQ
+           | TK_DIV_EQ
+
+ScalarType = TK_INT
+           | TK_FLOAT
+           | TK_LONG
+           | TK_DOUBLE
+           | Ident            -- TODO: what is this?!
+
+CastType   = TK_INT
+           | TK_FLOAT
+           | TK_LONG          -- TODO: why no double (in parseBaseExpr)
