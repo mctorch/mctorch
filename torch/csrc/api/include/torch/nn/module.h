@@ -1,6 +1,7 @@
 #pragma once
 
 #include <torch/detail/ordered_dict.h>
+#include <torch/nn/cursor.h>
 #include <torch/tensor.h>
 
 #include <memory>
@@ -16,9 +17,6 @@ enum class ScalarType;
 namespace torch { namespace nn {
 
 struct Archive;
-struct BufferCursor;
-struct ModuleCursor;
-struct ParameterCursor;
 
 /// The base class for all torch modules.
 class Module {
@@ -64,17 +62,17 @@ class Module {
   void zero_grad();
 
   /// Provides a means to traverse the `Module` tree.
-  ModuleCursor modules();
+  ModuleCursor modules(CursorPolicy policy = CursorPolicy::DFS);
 
   /// Traverses the (immediate) children of the `Module`.
-  ModuleCursor children();
+  ModuleCursor children(CursorPolicy policy = CursorPolicy::DFS);
 
   /// Provides a means to recursively access the parameters of the `Module`
   /// tree.
-  ParameterCursor parameters();
+  ParameterCursor parameters(CursorPolicy policy = CursorPolicy::DFS);
 
   /// Provides a means to recursively access the buffers of the `Module` tree.
-  BufferCursor buffers();
+  BufferCursor buffers(CursorPolicy policy = CursorPolicy::DFS);
 
   /// Serializes this `Module`. The default implementation serializes the
   /// submodules, parameters and buffers registered with the base class. The

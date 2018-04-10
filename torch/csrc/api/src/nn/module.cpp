@@ -53,19 +53,20 @@ void Module::type(at::ScalarType new_type) {}
 void Module::zero_grad() {}
 
 // Recursive Accessors
-ModuleCursor Module::modules() {
-  return {};
+ModuleCursor Module::modules(CursorPolicy policy) {
+  return ModuleCursor(this, policy);
 }
 
 // ModuleCursor with a different policy
-ModuleCursor Module::children() {
-  return {};
+ModuleCursor Module::children(CursorPolicy policy) {
+  // Also needs some kind of "stop"?????????????????????????????????
+  return ModuleCursor(this, policy);
 }
 
-ParameterCursor Module::parameters() {
+ParameterCursor Module::parameters(CursorPolicy policy) {
   return {};
 }
-BufferCursor Module::buffers() {
+BufferCursor Module::buffers(CursorPolicy policy) {
   return {};
 }
 
