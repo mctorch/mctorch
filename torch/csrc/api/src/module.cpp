@@ -19,7 +19,16 @@ Module::Module(std::string name)
 Module::~Module() = default;
 
 std::unique_ptr<Module> Module::clone() {
-  AT_ERROR("clone() has no default implementation");
+  TORCH_ERROR(
+      "clone() has not been implemented for %s. "
+      "Use the copy constructor if you don't require polymorphic cloning. "
+      "Otherwise, subclass CloneableModule<%s> to inherit cloning behavior.",
+      name_.c_str(),
+      name_.c_str());
+}
+
+std::vector<Tensor> Module::operator()(const std::vector<Tensor>& inputs) {
+  return forward(inputs);
 }
 
 // Train/Eval mode
@@ -74,7 +83,5 @@ void Module::register_parameters(
 void Module::register_buffers(const detail::OrderedDict<Tensor>& buffers) {}
 
 void Module::register_modules(const detail::OrderedDict<Module*>& modules) {}
-
-void Module::register_modules(const std::vector<Module*>& modules) {}
 
 }} // namespace torch::nn

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <torch/tensor.h>
 #include <torch/detail/ordered_dict.h>
+#include <torch/tensor.h>
 
 #include <memory>
 #include <string>
@@ -29,10 +29,14 @@ class Module {
   /// Returns the name of the `Module`.
   const std::string& name() const noexcept;
 
-  /// Performs a recursive clone of the entire module hierarchy. This is to
-  /// enable deep copying in a polymorphic setting, i.e. when all you have is a
-  /// `Module*` but want to clone the whole module hierarchy.
+  /// Performs a recursive clone of the entire module hierarchy, including
+  /// parameters and buffers. This is to enable deep copying in a polymorphic
+  /// setting, i.e. when all you have is a `Module*` but want to clone the whole
+  /// module hierarchy.
   virtual std::unique_ptr<Module> clone();
+
+  /// The call operator delegates to `forward()` (for convenience).
+  std::vector<Tensor> operator()(const std::vector<Tensor>& inputs);
 
   /// Takes a list of input variables and computes a list of output variables.
   virtual std::vector<Tensor> forward(const std::vector<Tensor>& inputs) = 0;
@@ -93,10 +97,6 @@ class Module {
 
   /// Inserts the modules into the modules_ map.
   void register_modules(const detail::OrderedDict<Module*>& modules);
-
-  /// Inserts the modules into the modules_ map, using `Module::name()` as the
-  /// string key for each module.
-  void register_modules(const std::vector<Module*>& modules);
 
  private:
   /// The module's name (e.g. "LSTM").
