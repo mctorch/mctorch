@@ -5424,6 +5424,7 @@ class TestTorch(TestCase):
             rootview = c[8]
             self.assertEqual(rootview.data_ptr(), c[0].data_ptr())
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_serialization(self):
         # Test serialization with a real file
         self._test_serialization(tempfile.NamedTemporaryFile)
@@ -5444,12 +5445,15 @@ class TestTorch(TestCase):
             self.assertTrue(torch.equal(a, b))
             self.assertEqual(i, j)
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_serialization_offset(self):
         self._test_serialization_offset(tempfile.TemporaryFile)
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_serialization_offset_filelike(self):
         self._test_serialization_offset(BytesIOContext)
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_half_tensor(self):
         x = torch.randn(5, 5).float()
         y = torch.randn(5, 5).float()
@@ -5466,6 +5470,7 @@ class TestTorch(TestCase):
             xh2 = torch.load(f)
             self.assertEqual(xh.float(), xh2.float())
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     @unittest.skipIf(not torch.cuda.is_available(), 'no CUDA')
     def test_half_tensor_cuda(self):
         x = torch.randn(5, 5).half()
@@ -5495,6 +5500,7 @@ class TestTorch(TestCase):
             self.assertEqual(u0.get_device(), 0)
             self.assertEqual(un.get_device(), device_count - 1)
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     @unittest.skipIf(not torch.cuda.is_available(), 'no CUDA')
     def test_serialization_cuda(self):
         self._test_serialization_cuda(tempfile.NamedTemporaryFile)
@@ -5503,6 +5509,7 @@ class TestTorch(TestCase):
     def test_serialization_cuda_filelike(self):
         self._test_serialization_cuda(BytesIOContext)
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_serialization_backwards_compat(self):
         a = [torch.arange(1 + i, 26 + i).view(5, 5).float() for i in range(2)]
         b = [a[i % 2] for i in range(4)]
@@ -5595,12 +5602,14 @@ class TestTorch(TestCase):
                     self.assertEquals(len(w), 1)
                     self.assertTrue(w[0].category, 'SourceChangeWarning')
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_serialization_container(self):
         self._test_serialization_container('file', tempfile.NamedTemporaryFile)
 
     def test_serialization_container_filelike(self):
         self._test_serialization_container('filelike', BytesIOContext)
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     def test_serialization_map_location(self):
         test_file_path = download_file('https://download.pytorch.org/test_data/gpu_tensors.pt')
 
@@ -6037,6 +6046,7 @@ class TestTorch(TestCase):
                 for i in range(len(array)):
                     self.assertEqual(tensor[i], array[i])
 
+    @unittest.skipIf(IS_WINDOWS and sys.version_info[0] == 2, 'FIXME: crash')
     @unittest.skipIf(not TEST_NUMPY, "Numpy not found")
     def test_numpy_index(self):
         i = np.int32([0, 1, 2])

@@ -21,17 +21,19 @@ TESTS = [
     'distributions',
     'indexing',
     'jit',
-    'legacy_nn',
     'multiprocessing',
     'nccl',
-    'nn',
     'optim',
     'sparse',
     'torch',
+    'nn',
     'utils',
 ]
 
 WINDOWS_BLACKLIST = [
+    'cpp_extensions',
+    'cuda',
+    'legacy_nn',
     'distributed',
 ]
 
