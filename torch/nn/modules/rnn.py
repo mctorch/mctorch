@@ -248,7 +248,7 @@ class RNN(RNNBase):
     where :math:`h_t` is the hidden state at time `t`, :math:`x_t` is
     the input at time `t`, and :math:`h_{(t-1)}` is the hidden state of the
     previous layer at time `t-1` or the initial hidden state at time `0`.
-    If :attr:`nonlinearity`='relu', then `ReLU` is used instead of `tanh`.
+    If :attr:`nonlinearity` is `'relu'`, then `ReLU` is used instead of `tanh`.
 
     Args:
         input_size: The number of expected features in the input `x`
@@ -257,7 +257,14 @@ class RNN(RNNBase):
             would mean stacking two RNNs together to form a `stacked RNN`,
             with the second RNN taking in outputs of the first RNN and
             computing the final results. Default: 1
-        nonlinearity: The non-linearity to use. Can be either 'tanh' or 'relu'. Default: 'tanh'
+        
+        
+        
+        
+        
+        
+        
+        earity: The non-linearity to use. Can be either 'tanh' or 'relu'. Default: 'tanh'
         bias: If ``False``, then the layer does not use bias weights `b_ih` and `b_hh`.
             Default: ``True``
         batch_first: If ``True``, then the input and output tensors are provided
@@ -544,7 +551,7 @@ class RNNCell(RNNCellBase):
 
         h' = \tanh(w_{ih} x + b_{ih}  +  w_{hh} h + b_{hh})
 
-    If :attr:`nonlinearity`='relu', then ReLU is used in place of tanh.
+    If :attr:`nonlinearity` is `'relu'`, then ReLU is used in place of tanh.
 
     Args:
         input_size: The number of expected features in the input `x`
