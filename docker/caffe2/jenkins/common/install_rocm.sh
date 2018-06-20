@@ -21,6 +21,7 @@ if [ "$ROCM_VERSION" = "1.8.2" ]; then
   tar xf apt_1.8.2.tar.bz2
   rm apt_1.8.2.tar.bz2
   echo "deb file:/opt/apt/apt_1.8.2/debian xenial main" > /etc/apt/sources.list.d/rocm.list
+  apt-get update
   popd
 
   apt-get install -y \
