@@ -18,6 +18,9 @@ std::unordered_set<Symbol> skip_list = {
   //FIXME Same problem as in DCE - cpp & python PythonOp and CppOp should be
   //FIXME treated as having side effects but ONNX depends on them being removed
   prim::Print,
+  // TODO(suo): can remove this once world tokens are passed in and out of
+  // graphs correctly
+  aten::append,
   //all the rand functions from native_functions.yaml
   aten::permute,
   aten::rand,
@@ -120,9 +123,10 @@ bool removeExtraNodeOutputs(Node *n) {
 
 void ConstantPropagation(Node* n, bool recurse) {
   bool constant_inputs = (n->inputs().size() > 0) &&
-    std::all_of(n->inputs().begin(), n->inputs().end(), [&](Value* v) {
-      return v->node()->kind() == prim::Constant;
-    });
+      std::all_of(n->inputs().begin(), n->inputs().end(), [&](Value* v) {
+                           return v->node()->kind() == prim::Constant &&
+                               v->node()->output()->type() != WorldType::get();
+                         });
   bool supported_node = skip_list.count(n->kind()) == 0;
   auto run_blocks = [&]() {
     if (recurse) {

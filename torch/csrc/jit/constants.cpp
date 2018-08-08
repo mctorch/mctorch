@@ -33,6 +33,8 @@ Value* insertConstant(
   } else if(val.isString()) {
     n->s_(attr::string, val.toString()->string());
     n->output()->setType(StringType::get());
+  } else if(val.isWorld()) {
+    n->output()->setType(WorldType::get());
   } else {
     throw constant_not_supported_error("Unsupported value kind: " + val.tagKind());
   }
@@ -87,6 +89,11 @@ RegisterOperators reg({
           auto s = node->s(attr::string);
           return [s](Stack& stack) {
             push(stack, s);
+            return 0;
+          };
+        } else if (type == WorldType::get()) {
+          return [](Stack& stack) {
+            push(stack, World());
             return 0;
           };
         } else {

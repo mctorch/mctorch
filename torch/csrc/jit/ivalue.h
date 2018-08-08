@@ -31,17 +31,15 @@ struct TORCH_API ConstantString : c10::intrusive_ptr_target {
   TORCH_API friend std::ostream& operator<<(std::ostream& out, const ConstantString & v);
 };
 
-
-// non-mutable list
-template<typename Elem>
-struct TORCH_API ConstantList : c10::intrusive_ptr_target {
+template <typename Elem>
+struct TORCH_API List : c10::intrusive_ptr_target {
  private:
   std::vector<Elem> elements_;
+
  public:
-  ConstantList(std::vector<Elem> elements_)
-  : elements_(std::move(elements_)) {}
-  static c10::intrusive_ptr<ConstantList<Elem>> create(std::vector<Elem> elements_) {
-    return c10::make_intrusive<ConstantList<Elem>>(std::move(elements_));
+  List(std::vector<Elem> elements_) : elements_(std::move(elements_)) {}
+  static c10::intrusive_ptr<List<Elem>> create(std::vector<Elem> elements_) {
+    return c10::make_intrusive<List<Elem>>(std::move(elements_));
   }
   const std::vector<Elem>& elements() const {
     return elements_;
@@ -49,13 +47,30 @@ struct TORCH_API ConstantList : c10::intrusive_ptr_target {
   operator const std::vector<Elem>&() const {
     return elements();
   }
+
+  std::vector<Elem>& elements() {
+    return elements_;
+  }
+  operator std::vector<Elem>&() {
+    return elements();
+  }
+
+  template<typename E>
+  TORCH_API friend std::ostream& operator<<(std::ostream& out, const List<E> & v);
 };
 
+struct World {
+  World() : world_id(1) {}
+  int64_t world_id;
+};
+
+template<typename T>
+struct List;
 struct IValue;
-using Tuple = ConstantList<IValue>;
-using IntList = ConstantList<int64_t>;
-using TensorList = ConstantList<at::Tensor>;
-using DoubleList = ConstantList<double>;
+using Tuple = List<IValue>;
+using IntList = List<int64_t>;
+using TensorList = List<at::Tensor>;
+using DoubleList = List<double>;
 
 // IValue is the generic tagged union used by the interpreter to hold
 // all value types.
@@ -65,7 +80,16 @@ using DoubleList = ConstantList<double>;
 // retain/release calls.
 
 #define TORCH_FORALL_TAGS(_) \
-  _(None) _(Tensor) _(Double) _(Int) _(Tuple) _(IntList) _(DoubleList) _(String) _(TensorList)
+  _(None) \
+  _(Tensor) \
+  _(Double) \
+  _(Int) \
+  _(Tuple) \
+  _(IntList) \
+  _(DoubleList) \
+  _(String) \
+  _(TensorList) \
+  _(World) \
 
 struct TORCH_API IValue {
   IValue()
@@ -148,6 +172,22 @@ struct TORCH_API IValue {
   double toDouble() const {
     JIT_ASSERT(isDouble());
     return as_double;
+  }
+
+  // World
+  IValue(World w)
+  : tag(Tag::World), retainable(false) {
+    as_world = w;
+  }
+  bool isWorld() const { return Tag::World == tag; }
+   World toWorld() const {
+    JIT_ASSERT(isWorld());
+    return as_world;
+  }
+  TORCH_API std::ostream& formatWorld(std::ostream& out) const {
+    JIT_ASSERT(isWorld());
+    out << as_world.world_id;
+    return out;
   }
 
   // Int
@@ -317,6 +357,7 @@ private:
     c10::intrusive_ptr_target* as_intrusive_ptr;
     double as_double;
     int64_t as_int;
+    World as_world;
     // this type should be as big as all the other types because it will
     // be used to copy the union's value in certain cases
     int64_t payload;
@@ -350,6 +391,7 @@ DEFINE_TO(bool, toInt)
 DEFINE_TO(std::vector<int64_t>, toIntListRef)
 DEFINE_TO(std::vector<double>, toDoubleListRef)
 DEFINE_TO(std::vector<at::Tensor>, toTensorListRef)
+DEFINE_TO(World, toWorld)
 
 #undef DEFINE_TO
 

@@ -123,6 +123,8 @@ inline IValue toIValue(py::handle obj, const TypePtr& type) {
         AT_ERROR("Insufficient type information to convert input");
       case TypeKind::GeneratorType:
         AT_ERROR("Generators are not supported yet.");
+      case TypeKind::WorldType:
+        AT_ERROR("World arguments should not be passed in by users");
     }
   AT_ERROR("Missing cases in toIValue! File a bug report.");
 }
