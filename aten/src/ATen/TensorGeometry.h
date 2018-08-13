@@ -18,14 +18,12 @@ struct AT_API TensorGeometry {
         strides_[i] = expected_stride;
         expected_stride *= sizes_[i];
       }
-      numel_ = expected_stride;
   }
 
   explicit TensorGeometry(const Tensor& t)
     : sizes_(t.sizes().vec())
     , strides_(t.strides().vec())
-    , storage_offset_(t.storage_offset())
-    , numel_(t.numel()) {}
+    , storage_offset_(t.storage_offset()) {}
 
   // true if the tensor is contiguous
   bool is_contiguous() const;
@@ -45,7 +43,13 @@ struct AT_API TensorGeometry {
   }
   IntList strides() const { return IntList{ strides_ }; }
   int64_t storage_offset() const { return storage_offset_; }
-  int64_t numel() const { return numel_; }
+  int64_t numel() const {
+    int64_t r = 1;
+    for (auto s : sizes()) {
+      r *= s;
+    }
+    return r;
+  }
 
   TensorGeometry transpose(int64_t dim0, int64_t dim1) {
     TensorGeometry r = *this; // copy
@@ -59,7 +63,6 @@ struct AT_API TensorGeometry {
   std::vector<int64_t> sizes_;
   std::vector<int64_t> strides_;
   int64_t storage_offset_;
-  int64_t numel_;
 };
 
 } // namespace at
