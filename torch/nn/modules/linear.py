@@ -5,6 +5,7 @@ from torch.nn.parameter import Parameter
 from .. import functional as F
 from .. import init
 from .module import Module
+from ..manifolds import create_manifold_parameter
 
 
 class Identity(Module):
@@ -65,11 +66,19 @@ class Linear(Module):
     """
     __constants__ = ['bias', 'in_features', 'out_features']
 
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, bias=True, weight_manifold=None, transpose_flag=False):
         super(Linear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = Parameter(torch.Tensor(out_features, in_features))
+        self.weight_manifold = weight_manifold
+        self.transpose_flag = transpose_flag
+
+        if weight_manifold is None:
+            self.weight = Parameter(torch.Tensor(out_features, in_features))
+        else:
+            self.transpose_flag, self.weight = create_manifold_parameter(
+                weight_manifold, (out_features, in_features), transpose_flag)
+
         if bias:
             self.bias = Parameter(torch.Tensor(out_features))
         else:
@@ -77,14 +86,24 @@ class Linear(Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.weight_manifold is None:
+            init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        else:
+            init.manifold_random_(self.weight)
+
         if self.bias is not None:
-            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            if self.transpose_flag:
+                fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight.transpose(-2, -1))
+            else:
+                fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
             init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input):
-        return F.linear(input, self.weight, self.bias)
+        if self.transpose_flag:
+            return F.linear(input, self.weight.transpose(-2, -1), self.bias)
+        else:
+            return F.linear(input, self.weight, self.bias)
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(

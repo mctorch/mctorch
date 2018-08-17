@@ -425,6 +425,14 @@ def sparse_(tensor, sparsity, std=0.01):
     return tensor
 
 
+def manifold_random_(tensor):
+    if not hasattr(tensor, 'manifold') or tensor.manifold is None:
+        return tensor
+
+    with torch.no_grad():
+        return tensor.copy_(tensor.manifold.rand())
+
+
 # for backward compatibility
 def _make_deprecate(meth):
     new_name = meth.__name__

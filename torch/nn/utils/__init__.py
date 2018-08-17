@@ -1,3 +1,4 @@
+from . import manifold_multi  # noqa: F401
 from . import rnn  # noqa: F401
 from .clip_grad import clip_grad_norm, clip_grad_norm_, clip_grad_value_  # noqa: F401
 from .weight_norm import weight_norm, remove_weight_norm  # noqa: F401
