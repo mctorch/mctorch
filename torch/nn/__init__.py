@@ -3,3 +3,4 @@ from .parameter import Parameter
 from .parallel import DataParallel
 from . import init
 from . import utils
+from .manifolds import *

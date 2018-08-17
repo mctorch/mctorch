@@ -1,4 +1,5 @@
 import torch
+import weakref
 
 
 class Parameter(torch.Tensor):
@@ -18,13 +19,43 @@ class Parameter(torch.Tensor):
         requires_grad (bool, optional): if the parameter requires gradient. See
             :ref:`excluding-subgraphs` for more details. Default: `True`
     """
-    def __new__(cls, data=None, requires_grad=True):
+    def __new__(cls, data=None, requires_grad=True, manifold=None):
         if data is None:
-            data = torch.Tensor()
+            if manifold is not None:
+                data = manifold.rand()
+            else:
+                data = torch.Tensor()
         return torch.Tensor._make_subclass(cls, data, requires_grad)
+
+    def __init__(self, data=None, requires_grad=True, manifold=None):
+        self._manifold = manifold
+        self._rgrad = None
+        if manifold is not None:
+            assert manifold.size() == self.size()
+            self.register_rgrad_hook()
 
     def __repr__(self):
         return 'Parameter containing:\n' + super(Parameter, self).__repr__()
 
     def __reduce_ex__(self, proto):
         return Parameter, (super(Parameter, self), self.requires_grad)
+
+    def register_rgrad_hook(self):
+        weak_self = weakref.ref(self)
+
+        def calculate_rgrad(grad):
+            var = weak_self()
+            if var is None or var._manifold is None:
+                return
+            var._rgrad = var._manifold.egrad2rgrad(self.data, grad)
+
+        self.register_hook(calculate_rgrad)
+
+    @property
+    def manifold(self):
+        return self._manifold
+
+    @property
+    def rgrad(self):
+        if self._manifold is not None:
+            return self._rgrad
