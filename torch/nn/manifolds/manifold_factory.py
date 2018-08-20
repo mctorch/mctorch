@@ -2,6 +2,7 @@ from .stiefel import Stiefel
 from ..parameter import Parameter
 
 
+#TODO: create factory for each class of manifold, so when adding new manifold user can add new factory and register that
 def create_manifold_parameter(manifold, shape, transpose=False):
     if manifold is Stiefel:
         if len(shape) == 3:

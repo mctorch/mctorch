@@ -108,5 +108,5 @@ class SGD(Optimizer):
                     p.data.add_(-group['lr'], d_p)
                 else:
                     p.data.add_(p.manifold.retr(p.data,
-                                -group['lr'] * p.grad.data) - p.data)
+                                -group['lr'] * p.rgrad.data) - p.data)
         return loss

@@ -76,8 +76,12 @@ class Linear(Module):
         if weight_manifold is None:
             self.weight = Parameter(torch.Tensor(out_features, in_features))
         else:
-            self.transpose_flag, self.weight = create_manifold_parameter(
+            self.transpose_flag, self._weight = create_manifold_parameter(
                 weight_manifold, (out_features, in_features), transpose_flag)
+            if self.transpose_flag:
+                self.weight = self._weight.transpose(-2, -1)
+            else:
+                self.weight = self._weight
 
         if bias:
             self.bias = Parameter(torch.Tensor(out_features))
@@ -89,21 +93,15 @@ class Linear(Module):
         if self.weight_manifold is None:
             init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         else:
-            init.manifold_random_(self.weight)
+            init.manifold_random_(self._weight)
 
         if self.bias is not None:
-            if self.transpose_flag:
-                fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight.transpose(-2, -1))
-            else:
-                fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
             init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input):
-        if self.transpose_flag:
-            return F.linear(input, self.weight.transpose(-2, -1), self.bias)
-        else:
-            return F.linear(input, self.weight, self.bias)
+        return F.linear(input, self.weight, self.bias)
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(
