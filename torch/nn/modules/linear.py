@@ -69,7 +69,19 @@ class Linear(Module):
         super(Linear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = Parameter(torch.Tensor(out_features, in_features))
+        self.weight_manifold = weight_manifold
+        self.transpose_flag = transpose_flag
+
+        if weight_manifold is None:
+            self.weight = Parameter(torch.Tensor(out_features, in_features))
+        else:
+            self.transpose_flag, self._weight = create_manifold_parameter(
+                weight_manifold, (out_features, in_features), transpose_flag)
+            if self.transpose_flag:
+                self.weight = self._weight.transpose(-2, -1)
+            else:
+                self.weight = self._weight
+
         if bias:
             self.bias = Parameter(torch.Tensor(out_features))
         else:
@@ -77,7 +89,11 @@ class Linear(Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.weight_manifold is None:
+            init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        else:
+            init.manifold_random_(self._weight)
+
         if self.bias is not None:
             fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
