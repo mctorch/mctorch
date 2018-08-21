@@ -21,3 +21,10 @@ def _list_with_default(out_size, defaults):
     if len(defaults) <= len(out_size):
         raise ValueError('Input dimension should be at least {}'.format(len(out_size) + 1))
     return [v if v is not None else d for v, d in zip(out_size, defaults[-len(out_size):])]
+
+
+def multiply_tuple(tuple):
+    res = 1
+    for x in tuple:
+        res = res * x
+    return res

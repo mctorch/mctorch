@@ -5,13 +5,14 @@ from torch.nn.parameter import Parameter
 from .. import functional as F
 from .. import init
 from .module import Module
-from .utils import _single, _pair, _triple
+from .utils import _single, _pair, _triple, multiply_tuple
+from ..manifolds import create_manifold_parameter
 
 
 class _ConvNd(Module):
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride,
-                 padding, dilation, transposed, output_padding, groups, bias):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding,
+                 dilation, transposed, output_padding, groups, bias, weight_manifold, transpose_flag):
         super(_ConvNd, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -26,12 +27,9 @@ class _ConvNd(Module):
         self.transposed = transposed
         self.output_padding = output_padding
         self.groups = groups
-        if transposed:
-            self.weight = Parameter(torch.Tensor(
-                in_channels, out_channels // groups, *kernel_size))
-        else:
-            self.weight = Parameter(torch.Tensor(
-                out_channels, in_channels // groups, *kernel_size))
+        self.weight_manifold = weight_manifold
+        self.transpose_flag = transpose_flag
+        self._init_weight_matrix()
         if bias:
             self.bias = Parameter(torch.Tensor(out_channels))
         else:
@@ -40,11 +38,38 @@ class _ConvNd(Module):
 
     def reset_parameters(self):
         n = self.in_channels
-        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.weight_manifold is None:
+            init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        else:
+            init.manifold_random_(self._weight)
         if self.bias is not None:
             fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
             init.uniform_(self.bias, -bound, bound)
+
+    def _init_weight_matrix(self):
+        if self.weight_manifold is None:
+            if self.transposed:
+                self.weight = Parameter(torch.Tensor(
+                    self.in_channels, self.out_channels // self.groups, *self.kernel_size))
+            else:
+                self.weight = Parameter(torch.Tensor(
+                    self.out_channels, self.in_channels // self.groups, *self.kernel_size))
+        else:
+            kernel_mult = multiply_tuple(self.kernel_size)
+            if self.transposed:
+                weight_shape = (self.in_channels, (self.out_channels // self.groups) * kernel_mult)
+                kernel_shape = (self.in_channels, self.out_channels // self.groups, *self.kernel_size)
+            else:
+                weight_shape = (self.out_channels, (self.in_channels // self.groups) * kernel_mult)
+                kernel_shape = (self.out_channels, self.in_channels // self.groups, *self.kernel_size)
+
+            self.transpose_flag, self._weight = create_manifold_parameter(
+                self.weight_manifold, weight_shape, self.transpose_flag)
+            if self.transpose_flag:
+                self.weight = self._weight.transpose(-2, -1).view(*kernel_shape)
+            else:
+                self.weight = self._weight.view(*kernel_shape)
 
     def extra_repr(self):
         s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'
@@ -164,15 +189,15 @@ class Conv1d(_ConvNd):
         https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 dilation=1, groups=1, bias=True, weight_manifold=None, transpose_flag=False):
         kernel_size = _single(kernel_size)
         stride = _single(stride)
         padding = _single(padding)
         dilation = _single(dilation)
         super(Conv1d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            False, _single(0), groups, bias)
+            False, _single(0), groups, bias, weight_manifold, transpose_flag)
 
     def forward(self, input):
         return F.conv1d(input, self.weight, self.bias, self.stride,
@@ -293,15 +318,15 @@ class Conv2d(_ConvNd):
         https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 dilation=1, groups=1, bias=True, weight_manifold=None, transpose_flag=False):
         kernel_size = _pair(kernel_size)
         stride = _pair(stride)
         padding = _pair(padding)
         dilation = _pair(dilation)
         super(Conv2d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            False, _pair(0), groups, bias)
+            False, _pair(0), groups, bias, weight_manifold, transpose_flag)
 
     def forward(self, input):
         return F.conv2d(input, self.weight, self.bias, self.stride,
@@ -416,15 +441,15 @@ class Conv3d(_ConvNd):
         https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, dilation=1, groups=1, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 dilation=1, groups=1, bias=True, weight_manifold=None, transpose_flag=False):
         kernel_size = _triple(kernel_size)
         stride = _triple(stride)
         padding = _triple(padding)
         dilation = _triple(dilation)
         super(Conv3d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            False, _triple(0), groups, bias)
+            False, _triple(0), groups, bias, weight_manifold, transpose_flag)
 
     def forward(self, input):
         return F.conv3d(input, self.weight, self.bias, self.stride,
@@ -557,8 +582,8 @@ class ConvTranspose1d(_ConvTransposeMixin, _ConvNd):
                          :math:`k = \frac{1}{\text{in\_channels} * \text{kernel\_size}}`
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, output_padding=0, groups=1, bias=True, dilation=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 output_padding=0, groups=1, bias=True, dilation=1, weight_manifold=None, transpose_flag=False):
         kernel_size = _single(kernel_size)
         stride = _single(stride)
         padding = _single(padding)
@@ -566,7 +591,7 @@ class ConvTranspose1d(_ConvTransposeMixin, _ConvNd):
         output_padding = _single(output_padding)
         super(ConvTranspose1d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            True, output_padding, groups, bias)
+            True, output_padding, groups, bias, weight_manifold, transpose_flag)
 
     def forward(self, input, output_size=None):
         output_padding = self._output_padding(input, output_size)
@@ -695,8 +720,8 @@ class ConvTranspose2d(_ConvTransposeMixin, _ConvNd):
         https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, output_padding=0, groups=1, bias=True, dilation=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 output_padding=0, groups=1, bias=True, dilation=1, weight_manifold=None, transpose_flag=False):
         kernel_size = _pair(kernel_size)
         stride = _pair(stride)
         padding = _pair(padding)
@@ -704,7 +729,7 @@ class ConvTranspose2d(_ConvTransposeMixin, _ConvNd):
         output_padding = _pair(output_padding)
         super(ConvTranspose2d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            True, output_padding, groups, bias)
+            True, output_padding, groups, bias, weight_manifold, transpose_flag)
 
     def forward(self, input, output_size=None):
         output_padding = self._output_padding(input, output_size)
@@ -828,8 +853,8 @@ class ConvTranspose3d(_ConvTransposeMixin, _ConvNd):
         https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
-                 padding=0, output_padding=0, groups=1, bias=True, dilation=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 output_padding=0, groups=1, bias=True, dilation=1, weight_manifold=None, transpose_flag=False):
         kernel_size = _triple(kernel_size)
         stride = _triple(stride)
         padding = _triple(padding)
@@ -837,7 +862,7 @@ class ConvTranspose3d(_ConvTransposeMixin, _ConvNd):
         output_padding = _triple(output_padding)
         super(ConvTranspose3d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            True, output_padding, groups, bias)
+            True, output_padding, groups, bias, weight_manifold, transpose_flag)
 
     def forward(self, input, output_size=None):
         output_padding = self._output_padding(input, output_size)
