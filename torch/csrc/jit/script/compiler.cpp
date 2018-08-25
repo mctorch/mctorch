@@ -536,7 +536,7 @@ Value* tryCreateList(
   return graph.insertNode(graph.createList(elem_type, list_ctor))->output();
 }
 
-// Match against against a mutable schema.
+// Match against a potentially mutable schema.
 //
 // We need to treat mutable schemas differently because the IR explicitly
 // expresses effects by including a world token in mutable ops. Users do not
@@ -558,16 +558,17 @@ at::optional<std::vector<Value*>> tryMatchMutableSchema(
     at::ArrayRef<NamedValue> attributes,
     std::ostream& failure_messages,
     bool convert_tensors_to_nums) {
-  JIT_ASSERT(schema.is_mutable);
-  // Add a dummy world token to be matched against
-  const auto worldToken = graph.insertConstant(World());
-  std::vector<NamedValue> inputsWithWorldToken(inputs.begin(), inputs.end());
-  inputsWithWorldToken.insert(inputsWithWorldToken.begin(), worldToken);
+  std::vector<NamedValue> modifiedInputs(inputs.begin(), inputs.end());
+  if (schema.is_mutable) {
+    // Add a dummy world token to be matched against
+    const auto worldToken = graph.insertConstant(World());
+    modifiedInputs.insert(modifiedInputs.begin(), worldToken);
+  }
   return tryMatchSchema(
       schema,
       loc,
       graph,
-      inputsWithWorldToken,
+      modifiedInputs,
       attributes,
       failure_messages,
       convert_tensors_to_nums);
@@ -655,49 +656,34 @@ at::optional<std::vector<Value*>> tryMatchSchema(
     return positional_inputs;
 }
 
-static Value* tryEmitBuiltin(
+static std::string prefixLine(const std::string& str, std::string prefix) {
+  std::stringstream ss;
+  bool was_newline = true;
+  for(auto c : str) {
+    if(was_newline)
+      ss << prefix;
+    ss.put(c);
+    was_newline = c == '\n';
+  }
+  return ss.str();
+}
+
+// Given a successful match between operator schema and symbol, emit a node
+// with the appropriate inputs and outputs.
+static Value* emitBuiltinNode(
     const std::shared_ptr<Operator>& op,
-    std::stringstream& failure_messages,
+    const std::vector<Value*>& inputs,
     const SourceRange& loc,
     Graph& graph,
-    Symbol name,
-    at::ArrayRef<NamedValue> inputs,
-    at::ArrayRef<NamedValue> attributes,
-    bool convert_tensors_to_nums) {
-  at::optional<std::vector<Value*>> matched_inputs;
-  if (op->schema().is_mutable) {
-    matched_inputs = tryMatchMutableSchema(
-        op->schema(),
-        loc,
-        graph,
-        inputs,
-        attributes,
-        failure_messages,
-        convert_tensors_to_nums);
-  } else {
-    matched_inputs = tryMatchSchema(
-        op->schema(),
-        loc,
-        graph,
-        inputs,
-        attributes,
-        failure_messages,
-        convert_tensors_to_nums);
-  }
-
-  if (!matched_inputs) {
-    return nullptr;
-  }
-  // we successfully matched this schema, construct the node
-
-  auto n = graph.insertNode(graph.create(name, *matched_inputs, 0))
+    Symbol name) {
+  auto n = graph.insertNode(graph.create(name, inputs, 0))
                 ->setSourceLocation(std::make_shared<SourceRange>(loc));
 
   // special case for chunk when the chunks=<const> is known
   // DO NOT ADD MORE SPECIAL CASES HERE, REFACTOR INTO A FUNCTION IF
   // NEEDED
   if(n->kind() == aten::chunk) {
-    auto value = constant_as<int64_t>((*matched_inputs)[1]);
+    auto value = constant_as<int64_t>((inputs)[1]);
     if(!value) {
       throw ErrorReport(loc) << "argument 'chunks' must be a constant";
     }
@@ -716,24 +702,16 @@ static Value* tryEmitBuiltin(
   return packOutputs(graph, n->outputs());
 }
 
-static std::string prefixLine(const std::string& str, std::string prefix) {
-  std::stringstream ss;
-  bool was_newline = true;
-  for(auto c : str) {
-    if(was_newline)
-      ss << prefix;
-    ss.put(c);
-    was_newline = c == '\n';
-  }
-  return ss.str();
-}
-
-Value* emitBuiltinCall(
+template <typename MatchFunc>
+static Value* emitBuiltinCallImpl(
   const SourceRange& loc,
   Graph& graph,
   Symbol name,
   at::ArrayRef<NamedValue> inputs,
   at::ArrayRef<NamedValue> attributes,
+  // A function that determines whether a set of input + attributes matches
+  // a schema.
+  MatchFunc matchStrategy,
   // if true, emitBuiltinCall will throw an exception if this builtin does not exist,
   // otherwise it will return nullptr if the builtin is not found.
   bool required) {
@@ -743,20 +721,27 @@ Value* emitBuiltinCall(
   std::stringstream failure_messages;
   //first we try to match the schema without any conversion
   //if no schema matches then insert ImplicitTensorToNum
-  for(bool convert_tensors_to_nums : {false, true}) {
-    //clear previous error messages
+  for (bool convert_tensors_to_nums : {false, true}) {
+    // clear previous error messages
     failure_messages.str("");
     for (const std::shared_ptr<Operator>& op : variants) {
-      if (auto result = tryEmitBuiltin(
-              op, failure_messages, loc, graph, name, inputs, attributes,
-              convert_tensors_to_nums)) {
-        return result;
+      const auto matched_inputs = matchStrategy(
+          op->schema(),
+          loc,
+          graph,
+          inputs,
+          attributes,
+          failure_messages,
+          convert_tensors_to_nums);
+
+      if (matched_inputs) {
+        return emitBuiltinNode(op, *matched_inputs, loc, graph, name);
       }
     }
   }
 
   // none of the options worked
-  if(!required) {
+  if (!required) {
     return nullptr;
   }
   if(variants.size() == 0) {
@@ -765,6 +750,45 @@ Value* emitBuiltinCall(
   throw ErrorReport(loc) << "arguments for call are not valid:\n"
                          << prefixLine(failure_messages.str(), "  ")
                          << "for call at";
+}
+
+// Search for operators matching the provided symbol name and input types.
+// If one is found, emit a node to the graph for that operator.
+Value* emitBuiltinCall(
+    const SourceRange& loc,
+    Graph& graph,
+    Symbol name,
+    at::ArrayRef<NamedValue> inputs,
+    at::ArrayRef<NamedValue> attributes,
+    // if true, emitBuiltinCall will throw an exception if this builtin does not
+    // exist, otherwise it will return nullptr if the builtin is not found.
+    bool required) {
+  return emitBuiltinCallImpl(
+      loc, graph, name, inputs, attributes, tryMatchSchema, required);
+}
+
+// Same as emitBuiltinCall, but in the case of a mutable schema the matcher will
+// create a dummy world token for the schema to match against.
+// See tryMatchMutableSchema().
+Value* emitBuiltinCallMutable(
+    const SourceRange& loc,
+    Graph& graph,
+    Symbol name,
+    at::ArrayRef<NamedValue> inputs,
+    at::ArrayRef<NamedValue> attributes,
+    // if true, emitBuiltinCall will throw an exception if this builtin does not
+    // exist, otherwise it will return nullptr if the builtin is not found.
+    bool required) {
+  return emitBuiltinCallImpl(
+      loc, graph, name, inputs, attributes, tryMatchMutableSchema, required);
+}
+
+static Value* ensureTensor(const SourceRange& range, Value* v) {
+  if(!v->type()->isSubtypeOf(DynamicType::get())) {
+    throw ErrorReport(range) << "expected a tensor value but found a "
+                             << v->type()->str();
+  }
+  return v;
 }
 
 static Value* ensureInt(const SourceRange& range, Value* v) {
@@ -785,8 +809,8 @@ std::shared_ptr<SugaredValue> BuiltinFunction::call(
   if (value)
     inputs.push_back(*value);
   inputs.insert(inputs.end(), inputs_.begin(), inputs_.end());
-  return std::make_shared<SimpleValue>(
-      emitBuiltinCall(loc, *m.graph(), symbol, inputs, attributes, true));
+  return std::make_shared<SimpleValue>(emitBuiltinCallMutable(
+      loc, *m.graph(), symbol, inputs, attributes, true));
 }
 
 struct to_ir {
@@ -1441,7 +1465,7 @@ private:
     if (it != function_table.end()) {
       return std::make_shared<SimpleValue>(packOutputs(*graph, method.emit_call_to(ident.range(), it->second, inputs, attributes)));
     }
-    if(auto result = emitBuiltinCall(ident.range(), *method.graph(), Symbol::aten(ident.name()), inputs, attributes, false)) {
+    if(auto result = emitBuiltinCallMutable(ident.range(), *method.graph(), Symbol::aten(ident.name()), inputs, attributes, false)) {
       return std::make_shared<SimpleValue>(result);
     }
     // it wasn't known built in, so treat it like standard apply
