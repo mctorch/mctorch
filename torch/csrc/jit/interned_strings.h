@@ -57,6 +57,8 @@ namespace torch { namespace jit {
   _(prim, FusedChunk)              \
   _(prim, NoneGenerator)           \
   _(prim, MemoryFence)             \
+  _(prim, EntryWorld)              \
+  _(prim, ExitWorld)               \
   _(aten, append)                  \
   _(aten, __not__)                 \
   FORALL_ATEN_BASE_SYMBOLS(_)      \

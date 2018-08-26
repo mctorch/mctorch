@@ -59,7 +59,7 @@ std::vector<Value*> Method::emit_call_to(SourceRange loc, Method & callee, Array
   for(at::Tensor* member : callee.member_inputs) {
     all_inputs->push_back(get_or_add_parameter(member));
   }
-  return inlineCallTo(*graph(), *callee.graph(), *all_inputs);
+  return inlineCallTo(*graph(), *callee.graph()->copy(), *all_inputs);
 }
 
 void Method::ensure_defined() {
