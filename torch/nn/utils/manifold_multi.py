@@ -2,6 +2,7 @@ import torch
 
 
 def multiprod(A, B):
+    # Added just to be parallel to manopt/pymanopt implemenetation
     return torch.matmul(A, B)
 
 
