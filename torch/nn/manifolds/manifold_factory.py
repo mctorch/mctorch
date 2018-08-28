@@ -2,9 +2,30 @@ from .stiefel import Stiefel
 from ..parameter import Parameter
 
 
-#TODO: create factory for each class of manifold, so when adding new manifold user can add new factory and register that
-def create_manifold_parameter(manifold, shape, transpose=False):
-    if manifold is Stiefel:
+class ManifoldShapeFactory(object):
+    factories = {}
+
+    @staticmethod
+    def _addFactory(manifold, factory):
+        ManifoldShapeFactory.factories[manifold] = factory
+
+    @staticmethod
+    def create_manifold_parameter(manifold, shape, transpose=False):
+        if manifold not in ManifoldShapeFactory.factories:
+            raise NotImplementedError
+        return ManifoldShapeFactory.factories[manifold].create(
+                                                    shape, transpose)
+
+    def __init__(self, manifold):
+        self.manifold = manifold
+        ManifoldShapeFactory._addFactory(manifold, self)
+
+    def create(self, shape, transpose=False):
+        raise NotImplementedError
+
+
+class StiefelLikeFactory(ManifoldShapeFactory):
+    def create(self, shape, transpose=False):
         if len(shape) == 3:
             k, h, w = shape
         elif len(shape) == 2:
@@ -23,11 +44,12 @@ def create_manifold_parameter(manifold, shape, transpose=False):
             to_transpose = True
             to_return = Parameter(manifold=Stiefel(w, h, k=k))
         elif h == w:
-            # use the argument only in case when it's vague
+            # use this argument only in case when shape is vague
             to_transpose = transpose
             to_return = Parameter(manifold=Stiefel(w, h, k=k))
 
         return to_transpose, to_return
 
-    else:
-        raise NotImplementedError
+
+create_manifold_parameter = ManifoldShapeFactory.create_manifold_parameter
+StiefelLikeFactory(Stiefel)
