@@ -38,6 +38,7 @@ struct TORCH_API List : c10::intrusive_ptr_target {
 
  public:
   List(std::vector<Elem> elements_) : elements_(std::move(elements_)) {}
+
   static c10::intrusive_ptr<List<Elem>> create(std::vector<Elem> elements_) {
     return c10::make_intrusive<List<Elem>>(std::move(elements_));
   }
@@ -54,9 +55,6 @@ struct TORCH_API List : c10::intrusive_ptr_target {
   operator std::vector<Elem>&() {
     return elements();
   }
-
-  template<typename E>
-  TORCH_API friend std::ostream& operator<<(std::ostream& out, const List<E> & v);
 };
 
 struct World {
@@ -64,8 +62,6 @@ struct World {
   int64_t world_id;
 };
 
-template<typename T>
-struct List;
 struct IValue;
 using Tuple = List<IValue>;
 using IntList = List<int64_t>;
@@ -175,8 +171,7 @@ struct TORCH_API IValue {
   }
 
   // World
-  IValue(World w)
-  : tag(Tag::World), retainable(false) {
+  IValue(World w) : tag(Tag::World), is_intrusive_ptr(false) {
     as_world = w;
   }
   bool isWorld() const { return Tag::World == tag; }
