@@ -15,10 +15,18 @@ class Parameter(torch.Tensor):
     the model. If there was no such class as :class:`Parameter`, these
     temporaries would get registered too.
 
+    In case manifold parameter is set, on every update to grad variable it also
+    calculates rgrad which is reimannian gradient for consrained update.
+    Also all the optimizers should implement constrained updates in case
+    manifold is set.
+
     Arguments:
         data (Tensor): parameter tensor.
         requires_grad (bool, optional): if the parameter requires gradient. See
             :ref:`excluding-subgraphs` for more details. Default: `True`
+        manifold (Manifold): if the manifold object is given than the parameter
+            tensor shape and values will be constrained on manifold shape and
+            values
     """
     def __new__(cls, data=None, requires_grad=True, manifold=None):
         if data is None:

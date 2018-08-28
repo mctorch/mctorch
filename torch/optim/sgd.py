@@ -71,6 +71,10 @@ class SGD(Optimizer):
     def step(self, closure=None):
         """Performs a single optimization step.
 
+        Also added case where parameter is constrained to a manifold.
+        Current implementation just supports normal SGD update without
+        momentum.
+
         Arguments:
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
