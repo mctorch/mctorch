@@ -8,6 +8,11 @@ class Stiefel(Manifold):
     """
     Class for Stiefel manifold with shape (k x height x width)
     or (height x width)
+<<<<<<< HEAD
+=======
+
+    With k > 1 it applies product of k Stiefels
+>>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
     """
 
     def __init__(self, height, width, k=1):
@@ -16,6 +21,11 @@ class Stiefel(Manifold):
                              "height = %d and width = %d." % (height, width))
         if k < 1:
             raise ValueError("Need k >= 1. Value supplied was k = %d." % k)
+<<<<<<< HEAD
+=======
+
+        super(Manifold, self).__init__()
+>>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
         # Set the dimensions of the Stiefel
         self._n = height
         self._p = width

@@ -185,6 +185,11 @@ class Conv1d(_ConvNd):
         groups (int, optional): Number of blocked connections from input
             channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `in_channels * (out_channels * kernel_size)` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, L_{in})`
@@ -314,6 +319,11 @@ class Conv2d(_ConvNd):
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `in_channels * (out_channels * ks[0] *ks[1])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, H_{in}, W_{in})`
@@ -447,6 +457,11 @@ class Conv3d(_ConvNd):
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `in_channels * (out_channels * ks[0] * ks[1] * ks[2])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`
@@ -628,6 +643,11 @@ class ConvTranspose1d(_ConvTransposeNd):
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `out_channels * (in_channels * kernel_size)` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, L_{in})`
@@ -746,6 +766,11 @@ class ConvTranspose2d(_ConvTransposeNd):
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `out_channels * (in_channels * ks[0] * ks[1])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, H_{in}, W_{in})`
@@ -895,6 +920,11 @@ class ConvTranspose3d(_ConvTransposeNd):
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `out_channels * (in_channels * ks[0] * ks[1] * ks[2])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`
