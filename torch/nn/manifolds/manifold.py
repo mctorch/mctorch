@@ -4,6 +4,23 @@ import torch
 class Manifold(object):
     """
     Base class for manifold constraints
+
+    All manifolds should subclass this class:
+
+        import torch.nn as nn
+        class XManifold(nn.Manifold):
+            def __init__(self, args):
+                super(Manifold, self).__init__()
+
+            def dim(self):
+                ...
+
+    All functions map to corresponding functions in
+    Manopt `<http://www.manopt.org>` and its python dervivation
+    pymanopt `<https://github.com/pymanopt/pymanopt>`
+
+    All functions should be converted to torch counterparts.
+
     """
 
     def __init__(self):

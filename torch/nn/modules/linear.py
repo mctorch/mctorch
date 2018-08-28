@@ -16,6 +16,10 @@ class Linear(Module):
         out_features: size of each output sample
         bias: If set to False, the layer will not learn an additive bias.
             Default: ``True``
+        weight_manifold: If set then weigh tensor parameter will be constrained
+            to specified Manifold
+        transpose_flag: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, *, in\_features)` where :math:`*` means any number of
@@ -28,6 +32,8 @@ class Linear(Module):
             `(out_features x in_features)`. The values are initialized from
             :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})` where
             :math:`k = \frac{1}{\text{in\_features}}`
+            In case when manifold is set weight is constrained to manifold 
+            constraints and intialized randomly on the manifold space
         bias:   the learnable bias of the module of shape :math:`(out_features)`.
                 If :attr:`bias` is ``True``, the values are initialized from
                 :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})` where
@@ -41,7 +47,8 @@ class Linear(Module):
         >>> print(output.size())
     """
 
-    def __init__(self, in_features, out_features, bias=True, weight_manifold=None, transpose_flag=False):
+    def __init__(self, in_features, out_features, bias=True,
+                 weight_manifold=None, transpose_flag=False):
         super(Linear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
