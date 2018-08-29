@@ -179,11 +179,6 @@ struct TORCH_API IValue {
     JIT_ASSERT(isWorld());
     return as_world;
   }
-  TORCH_API std::ostream& formatWorld(std::ostream& out) const {
-    JIT_ASSERT(isWorld());
-    out << "World";
-    return out;
-  }
 
   // Int
   IValue(int64_t i)
