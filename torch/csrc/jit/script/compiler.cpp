@@ -536,45 +536,7 @@ Value* tryCreateList(
   return graph.insertNode(graph.createList(elem_type, list_ctor))->output();
 }
 
-// Match against a potentially mutable schema.
-//
-// We need to treat mutable schemas differently because the IR explicitly
-// expresses effects by including a world token in mutable ops. Users do not
-// know about the world token, so we need to generate a dummy one and add
-// it to the inputs for schema matching.
-//
-// Example:
-//   append(int[] list, int el)
-// becomes
-//   append(World w, int[] list, int el)
-//
-// NOTE: The dummy world token has no meaning; the AnnotateEffects pass is
-// necessary to enforce linearization on effectful ops.
-at::optional<std::vector<Value*>> tryMatchMutableSchema(
-    const FunctionSchema& schema,
-    const SourceRange& loc,
-    Graph& graph,
-    at::ArrayRef<NamedValue> inputs,
-    at::ArrayRef<NamedValue> attributes,
-    std::ostream& failure_messages,
-    bool convert_tensors_to_nums) {
-  std::vector<NamedValue> modifiedInputs(inputs.begin(), inputs.end());
-  if (schema.is_mutable) {
-    // Add a dummy world token to be matched against
-    const auto worldToken = graph.insertConstant(World());
-    modifiedInputs.insert(modifiedInputs.begin(), worldToken);
-  }
-  return tryMatchSchema(
-      schema,
-      loc,
-      graph,
-      modifiedInputs,
-      attributes,
-      failure_messages,
-      convert_tensors_to_nums);
-}
-
-at::optional<std::vector<Value*>> tryMatchSchema(
+at::optional<std::vector<Value*>> tryMatchSchemaImpl(
   const FunctionSchema& schema,
   const SourceRange& loc,
   Graph& graph,
@@ -586,6 +548,7 @@ at::optional<std::vector<Value*>> tryMatchSchema(
       failure_messages << "\nfor operator " << schema << ":\n";
       return failure_messages;
     };
+    std::vector<NamedValue> modifiedArgs;
 
     std::vector<Value*> positional_inputs;
     std::vector<bool> used_kwarg(kwargs.size(), false);
@@ -656,6 +619,44 @@ at::optional<std::vector<Value*>> tryMatchSchema(
     return positional_inputs;
 }
 
+// Match against a potentially mutable schema.
+//
+// We need to treat mutable schemas differently because the IR explicitly
+// expresses effects by including a world token in mutable ops. Users do not
+// know about the world token, so we need to generate a dummy one and add
+// it to the inputs for schema matching.
+//
+// Example:
+//   append(int[] list, int el)
+// becomes
+//   append(World w, int[] list, int el)
+//
+// NOTE: The dummy world token has no meaning; the AnnotateEffects pass is
+// necessary to enforce linearization on effectful ops.
+at::optional<std::vector<Value*>> tryMatchSchema(
+    const FunctionSchema& schema,
+    const SourceRange& loc,
+    Graph& graph,
+    at::ArrayRef<NamedValue> inputs,
+    at::ArrayRef<NamedValue> attributes,
+    std::ostream& failure_messages,
+    bool convert_tensors_to_nums) {
+  std::vector<NamedValue> modifiedInputs(inputs.begin(), inputs.end());
+  if (schema.is_mutable) {
+    // Add a dummy world token to be matched against
+    const auto worldToken = graph.insertDummyWorld();
+    modifiedInputs.insert(modifiedInputs.begin(), worldToken);
+  }
+  return tryMatchSchemaImpl(
+      schema,
+      loc,
+      graph,
+      modifiedInputs,
+      attributes,
+      failure_messages,
+      convert_tensors_to_nums);
+}
+
 static std::string prefixLine(const std::string& str, std::string prefix) {
   std::stringstream ss;
   bool was_newline = true;
@@ -702,16 +703,14 @@ static Value* emitBuiltinNode(
   return packOutputs(graph, n->outputs());
 }
 
-template <typename MatchFunc>
-static Value* emitBuiltinCallImpl(
+// Search for operators matching the provided symbol name and input types.
+// If one is found, emit a node to the graph for that operator.
+Value* emitBuiltinCall(
   const SourceRange& loc,
   Graph& graph,
   Symbol name,
   at::ArrayRef<NamedValue> inputs,
   at::ArrayRef<NamedValue> attributes,
-  // A function that determines whether a set of input + attributes matches
-  // a schema.
-  MatchFunc matchStrategy,
   // if true, emitBuiltinCall will throw an exception if this builtin does not exist,
   // otherwise it will return nullptr if the builtin is not found.
   bool required) {
@@ -725,7 +724,7 @@ static Value* emitBuiltinCallImpl(
     // clear previous error messages
     failure_messages.str("");
     for (const std::shared_ptr<Operator>& op : variants) {
-      const auto matched_inputs = matchStrategy(
+      const auto matched_inputs = tryMatchSchema(
           op->schema(),
           loc,
           graph,
@@ -752,37 +751,6 @@ static Value* emitBuiltinCallImpl(
                          << "for call at";
 }
 
-// Search for operators matching the provided symbol name and input types.
-// If one is found, emit a node to the graph for that operator.
-Value* emitBuiltinCall(
-    const SourceRange& loc,
-    Graph& graph,
-    Symbol name,
-    at::ArrayRef<NamedValue> inputs,
-    at::ArrayRef<NamedValue> attributes,
-    // if true, emitBuiltinCall will throw an exception if this builtin does not
-    // exist, otherwise it will return nullptr if the builtin is not found.
-    bool required) {
-  return emitBuiltinCallImpl(
-      loc, graph, name, inputs, attributes, tryMatchSchema, required);
-}
-
-// Same as emitBuiltinCall, but in the case of a mutable schema the matcher will
-// create a dummy world token for the schema to match against.
-// See tryMatchMutableSchema().
-Value* emitBuiltinCallMutable(
-    const SourceRange& loc,
-    Graph& graph,
-    Symbol name,
-    at::ArrayRef<NamedValue> inputs,
-    at::ArrayRef<NamedValue> attributes,
-    // if true, emitBuiltinCall will throw an exception if this builtin does not
-    // exist, otherwise it will return nullptr if the builtin is not found.
-    bool required) {
-  return emitBuiltinCallImpl(
-      loc, graph, name, inputs, attributes, tryMatchMutableSchema, required);
-}
-
 static Value* ensureInt(const SourceRange& range, Value* v) {
   if(!v->type()->isSubtypeOf(IntType::get())) {
     throw ErrorReport(range) << "expected a int but found a "
@@ -801,7 +769,7 @@ std::shared_ptr<SugaredValue> BuiltinFunction::call(
   if (value)
     inputs.push_back(*value);
   inputs.insert(inputs.end(), inputs_.begin(), inputs_.end());
-  return std::make_shared<SimpleValue>(emitBuiltinCallMutable(
+  return std::make_shared<SimpleValue>(emitBuiltinCall(
       loc, *m.graph(), symbol, inputs, attributes, true));
 }
 
@@ -1457,7 +1425,7 @@ private:
     if (it != function_table.end()) {
       return std::make_shared<SimpleValue>(packOutputs(*graph, method.emit_call_to(ident.range(), it->second, inputs, attributes)));
     }
-    if(auto result = emitBuiltinCallMutable(ident.range(), *method.graph(), Symbol::aten(ident.name()), inputs, attributes, false)) {
+    if(auto result = emitBuiltinCall(ident.range(), *method.graph(), Symbol::aten(ident.name()), inputs, attributes, false)) {
       return std::make_shared<SimpleValue>(result);
     }
     // it wasn't known built in, so treat it like standard apply
