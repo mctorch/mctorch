@@ -815,14 +815,6 @@ jobs:
       PYTHON_VERSION: "2"
     <<: *caffe2_macos_build_defaults
 
-  caffe2_conda2_macos10_13_build:
-    environment:
-      CAFFE2_USE_ANACONDA: 1
-      SKIP_CONDA_TESTS: 1
-      PYTHON_INSTALLATION: "system"
-      ANACONDA_VERSION: "2"
-    <<: *caffe2_macos_build_defaults
-
 workflows:
   version: 2
   build:
@@ -906,4 +898,3 @@ workflows:
 
       # - caffe2_py2_ios_macos10_13_build
       # - caffe2_py2_system_macos10_13_build
-      # - caffe2_conda2_macos10_13_build
