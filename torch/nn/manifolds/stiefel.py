@@ -8,24 +8,18 @@ class Stiefel(Manifold):
     """
     Class for Stiefel manifold with shape (k x height x width)
     or (height x width)
-<<<<<<< HEAD
-=======
 
     With k > 1 it applies product of k Stiefels
->>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
     """
 
     def __init__(self, height, width, k=1):
         if height < width or width < 1:
-            raise ValueError("Need height >= width >= 1. Values supplied were"
-                             "height = %d and width = %d." % (height, width))
+            raise ValueError(("Need height >= width >= 1. Values supplied were"
+                             "height = {} and width = {}.").format(height, width))
         if k < 1:
-            raise ValueError("Need k >= 1. Value supplied was k = %d." % k)
-<<<<<<< HEAD
-=======
+            raise ValueError("Need k >= 1. Value supplied was k = {}.".format(k))
 
         super(Manifold, self).__init__()
->>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
         # Set the dimensions of the Stiefel
         self._n = height
         self._p = width
@@ -41,9 +35,9 @@ class Stiefel(Manifold):
 
     def __str__(self):
         if self._k == 1:
-            return "Stiefel manifold St(%d, %d)" % (self._n, self._p)
+            return "Stiefel manifold St({}, {})".format(self._n, self._p)
         elif self._k >= 2:
-            return "Product Stiefel manifold St(%d, %d)^%d" % (
+            return "Product Stiefel manifold St({}, {})^{}".format(
                 self._n, self._p, self._k)
 
     def rand(self):
@@ -102,7 +96,7 @@ class Stiefel(Manifold):
     def randvec(self, X):
         U = torch.randn(*X.size())
         U = self.proj(X, U)
-        U = U / torch.norm(U)
+        U = U / self.norm(X, U)
         return U
 
     def transp(self, x1, x2, d):
