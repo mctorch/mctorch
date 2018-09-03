@@ -1,4 +1,5 @@
 from .stiefel import Stiefel
+from .positive_definite import PositiveDefinite
 from ..parameter import Parameter
 
 
@@ -32,6 +33,7 @@ class ManifoldShapeFactory(object):
         self.manifold = manifold
         ManifoldShapeFactory._addFactory(manifold, self)
 
+    # TODO: change return of create to manifold param and modified tensor if any
     def create(self, shape, transpose=False):
         raise NotImplementedError
 
@@ -56,8 +58,8 @@ class StiefelLikeFactory(ManifoldShapeFactory):
             k = 1
             h, w = shape
         else:
-            raise ValueError("Invalid shape %s, length of shape"
-                             "tuple should be 2 or 3" % (shape,))
+            raise ValueError(("Invalid shape {}, length of shape "
+                             "tuple should be 2 or 3").format(shape))
 
         to_transpose = transpose
         to_return = None
@@ -74,6 +76,32 @@ class StiefelLikeFactory(ManifoldShapeFactory):
 
         return to_transpose, to_return
 
+class SquareManifoldFactory(ManifoldShapeFactory):
+    """
+    Manifold shape factory for manifold constrained parameter which 
+    allows only for square shapes. For example PositiveDefinite manifold
+
+    Constraints:
+        if 3D tensor (k,n,n):
+            k > 1 and n > 1
+        if 2D tensor (n,n):
+            n > 1
+    """
+    def create(self, shape, transpose=False):
+        if len(shape) == 3:
+            k, n, m = shape
+        elif len(shape) == 2:
+            k = 1
+            n, m = shape
+        else:
+            raise ValueError(("Invalid shape {}, length of shape"
+                             "tuple should be 2 or 3").format(shape))
+        if n != m:
+            raise ValueError(("Invalid shape {}  dimensions should "
+                             "be equal").format(shape))
+        return transpose, Parameter(manifold=self.manifold(n=n, k=k))
+
 
 create_manifold_parameter = ManifoldShapeFactory.create_manifold_parameter
 StiefelLikeFactory(Stiefel)
+SquareManifoldFactory(PositiveDefinite)

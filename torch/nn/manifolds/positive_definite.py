@@ -14,7 +14,9 @@ class PositiveDefinite(Manifold):
 
     def __init__(self, n, k=1):
         super(Manifold, self).__init__()
-        if k < 1:
+        if n < 1:
+            raise ValueError("Need n >= 1. Value supplied was n = {}.".format(n))
+        if k < 1 :
             raise ValueError("Need k >= 1. Value supplied was k = {}.".format(k))
         # Set the dimensions of the Positive Definite
         self._n = n
