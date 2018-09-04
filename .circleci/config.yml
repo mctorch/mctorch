@@ -14,6 +14,7 @@ pytorch_linux_cpu_build_test_defaults: &pytorch_linux_cpu_build_test_defaults
       name: Build
       no_output_timeout: "10h"
       command: |
+        export IN_CIRCLECI=1
         export SCCACHE_BUCKET=ossci-compiler-cache-circleci-v2
         export SCCACHE_MAX_JOBS=`expr $(nproc) - 1`
         export MEMORY_LIMIT_MAX_JOBS=8  # the "large" resource class on CircleCI has 32 CPU cores, if we use all of them we'll OOM
@@ -34,6 +35,7 @@ pytorch_linux_build_defaults: &pytorch_linux_build_defaults
       name: Build
       no_output_timeout: "10h"
       command: |
+        export IN_CIRCLECI=1
         export SCCACHE_BUCKET=ossci-compiler-cache-circleci-v2
         if [ -n "${CUDA_VERSION}" ]; then
           export TORCH_CUDA_ARCH_LIST=5.2
@@ -105,7 +107,8 @@ pytorch_linux_test_defaults: &pytorch_linux_test_defaults
           id=$(docker run -t -d -w /var/lib/jenkins ${DOCKER_IMAGE})
         fi
         pwd
-        echo "declare -x PYTHON_VERSION=${PYTHON_VERSION}" > /home/circleci/project/env
+        echo "declare -x IN_CIRCLECI=1" > /home/circleci/project/env
+        echo "declare -x PYTHON_VERSION=${PYTHON_VERSION}" >> /home/circleci/project/env
         echo "declare -x SCCACHE_BUCKET=${SCCACHE_BUCKET}" >> /home/circleci/project/env
         # This IAM user allows write access to S3 bucket for sccache
         echo "declare -x AWS_ACCESS_KEY_ID=AKIAJJZUW4G2ASX5W7KA" >> /home/circleci/project/env
@@ -129,6 +132,7 @@ caffe2_linux_build_defaults: &caffe2_linux_build_defaults
       name: Build
       no_output_timeout: "10h"
       command: |
+        export IN_CIRCLECI=1
         export SCCACHE_BUCKET=ossci-compiler-cache-circleci-v2
         # This IAM user allows write access to S3 bucket for sccache
         export AWS_ACCESS_KEY_ID=AKIAJJZUW4G2ASX5W7KA
@@ -242,7 +246,8 @@ caffe2_linux_test_defaults: &caffe2_linux_test_defaults
           id=$(docker run -t -d -w /var/lib/jenkins ${DOCKER_IMAGE})
         fi
         pwd
-        echo "declare -x SCCACHE_BUCKET=${SCCACHE_BUCKET}" > /home/circleci/project/env
+        echo "declare -x IN_CIRCLECI=1" > /home/circleci/project/env
+        echo "declare -x SCCACHE_BUCKET=${SCCACHE_BUCKET}" >> /home/circleci/project/env
         # This IAM user allows write access to S3 bucket for sccache
         echo "declare -x AWS_ACCESS_KEY_ID=AKIAJJZUW4G2ASX5W7KA" >> /home/circleci/project/env
         echo "declare -x AWS_SECRET_ACCESS_KEY=${CIRCLECI_AWS_SECRET_KEY_FOR_SCCACHE_S3_BUCKET}" >> /home/circleci/project/env
@@ -311,6 +316,8 @@ caffe2_macos_build_defaults: &caffe2_macos_build_defaults
         no_output_timeout: "10h"
         command: |
           set -ex
+
+          export IN_CIRCLECI=1
 
           brew install cmake
 
@@ -513,9 +520,12 @@ jobs:
           command: |
             set -ex
 
+            export IN_CIRCLECI=1
+
             # Install sccache
             sudo curl https://s3.amazonaws.com/ossci-macos/sccache --output /usr/local/bin/sccache
             sudo chmod +x /usr/local/bin/sccache
+
             export SCCACHE_BUCKET=ossci-compiler-cache-circleci-v2
             # This IAM user allows write access to S3 bucket for sccache
             export AWS_ACCESS_KEY_ID=AKIAJJZUW4G2ASX5W7KA
@@ -548,6 +558,7 @@ jobs:
           no_output_timeout: "10h"
           command: |
             set -ex
+            export IN_CIRCLECI=1
             git submodule update --init
             chmod a+x .jenkins/pytorch/macos-test.sh
             .jenkins/pytorch/macos-test.sh
@@ -565,6 +576,8 @@ jobs:
           no_output_timeout: "10h"
           command: |
             set -ex
+
+            export IN_CIRCLECI=1
 
             # Install CUDA 9.2
             sudo rm -rf ~/cuda_9.2.64_mac_installer.app || true
