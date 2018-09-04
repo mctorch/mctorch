@@ -28,6 +28,16 @@ if [[ "${JOB_BASE_NAME}" == *cuda9.2* ]]; then
   export DYLD_LIBRARY_PATH=/Developer/NVIDIA/CUDA-${CUDA_VERSION}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}
   export CUDA_HOME=/Developer/NVIDIA/CUDA-${CUDA_VERSION}
   export NO_CUDA=0
+
+  if [ -z "${IN_CIRCLECI}" ]; then
+    # Eigen gives "explicit specialization of class must precede its first use" error
+    # when compiling with Xcode 9.1 toolchain, so we have to use Xcode 8.2 toolchain instead.
+    export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+  fi
+else
+  if [ -z "${IN_CIRCLECI}" ]; then
+    export DEVELOPER_DIR=/Applications/Xcode9.app/Contents/Developer
+  fi
 fi
 
 export MACOSX_DEPLOYMENT_TARGET=10.9
@@ -56,6 +66,7 @@ export IMAGE_COMMIT_TAG=${BUILD_ENVIRONMENT}-${IMAGE_COMMIT_ID}
 python setup.py install
 
 # Upload torch binaries when the build job is finished
-# NOTE: we don't need to upload binaries to S3 in CircleCI
-# 7z a ${IMAGE_COMMIT_TAG}.7z ${PYTORCH_ENV_DIR}/miniconda3/lib/python3.6/site-packages/torch*
-# aws s3 cp ${IMAGE_COMMIT_TAG}.7z s3://ossci-macos-build/pytorch/${IMAGE_COMMIT_TAG}.7z --acl public-read
+if [ -z "${IN_CIRCLECI}" ]; then
+  7z a ${IMAGE_COMMIT_TAG}.7z ${PYTORCH_ENV_DIR}/miniconda3/lib/python3.6/site-packages/torch*
+  aws s3 cp ${IMAGE_COMMIT_TAG}.7z s3://ossci-macos-build/pytorch/${IMAGE_COMMIT_TAG}.7z --acl public-read
+fi
