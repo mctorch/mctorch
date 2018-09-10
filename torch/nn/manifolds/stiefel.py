@@ -60,6 +60,9 @@ class Stiefel(Manifold):
     def proj(self, X, U):
         return U - multiprod(X, multisym(multiprod(multitransp(X), U)))
 
+    def inner(self, X, G1, G2):
+        return torch.sum(G1 * G2)
+
     def retr(self, X, G):
         """
         Retract to the Stiefel using the qr decomposition of X + G.

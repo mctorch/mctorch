@@ -17,6 +17,7 @@ from .rprop import Rprop  # noqa: F401
 from .rmsprop import RMSprop  # noqa: F401
 from .optimizer import Optimizer  # noqa: F401
 from .lbfgs import LBFGS  # noqa: F401
+from .conjugate_gradient import ConjugateGradient  # noqa: F401
 from . import lr_scheduler  # noqa: F401
 
 del adadelta
@@ -31,3 +32,4 @@ del rprop
 del rmsprop
 del optimizer
 del lbfgs
+del conjugate_gradient

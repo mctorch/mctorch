@@ -16,7 +16,7 @@ class PositiveDefinite(Manifold):
         super(Manifold, self).__init__()
         if n < 1:
             raise ValueError("Need n >= 1. Value supplied was n = {}.".format(n))
-        if k < 1 :
+        if k < 1:
             raise ValueError("Need k >= 1. Value supplied was k = {}.".format(k))
         # Set the dimensions of the Positive Definite
         self._n = n
@@ -35,7 +35,7 @@ class PositiveDefinite(Manifold):
                 self._n, self._n)
         elif self._k >= 2:
             return ("Product Positive Definite manifold {} ({}, {}) "
-            "matrices").format(self._k, self._n, self._n)
+                    "matrices").format(self._k, self._n, self._n)
 
     def rand(self):
         """
@@ -56,6 +56,11 @@ class PositiveDefinite(Manifold):
     def proj(self, X, U):
         return multisym(U)
 
+    def inner(self, X, G1, G2):
+        G1s, _ = torch.gesv(G1, X)
+        G2s, _ = torch.gesv(G2, X)
+        return torch.sum(G1s * G2s)
+
     def retr(self, X, G):
         """
         Retract to positive definite
@@ -63,12 +68,11 @@ class PositiveDefinite(Manifold):
         X_inv_G, _ = torch.gesv(G, X)
         return multisym(X + G + .5 * multiprod(G, X_inv_G))
 
-
     def ehess2rhess(self, X, egrad, ehess, H):
         # Directional derivatives of the Riemannian gradient
         Hess = multiprod(X, multiprod(multisym(ehess), X))
         Hess += 2 * multisym(multiprod(H, multiprod(multisym(egrad), X)))
-        
+
         # Correction factor for the non-constant metric
         Hess -= multisym(multiprod(H, multiprod(multisym(egrad), X)))
         return Hess
