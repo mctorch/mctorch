@@ -1,5 +1,6 @@
 from .stiefel import Stiefel
 from .positive_definite import PositiveDefinite
+from .euclidean import Euclidean
 from ..parameter import Parameter
 
 
@@ -76,9 +77,10 @@ class StiefelLikeFactory(ManifoldShapeFactory):
 
         return to_transpose, to_return
 
+
 class SquareManifoldFactory(ManifoldShapeFactory):
     """
-    Manifold shape factory for manifold constrained parameter which 
+    Manifold shape factory for manifold constrained parameter which
     allows only for square shapes. For example PositiveDefinite manifold
 
     Constraints:
@@ -102,6 +104,19 @@ class SquareManifoldFactory(ManifoldShapeFactory):
         return transpose, Parameter(manifold=self.manifold(n=n, k=k))
 
 
+class EuclideanManifoldFactory(ManifoldShapeFactory):
+    """
+    Manifold factory fro euclidean just initializes parameter manifold with
+    shape parameter of create without transpose
+    """
+    def create(self, shape, transpose=False):
+        if len(shape) == 0:
+            raise ValueError("Shape length cannot be 0")
+        else:
+            return transpose, Parameter(manifold=self.manifold(*shape))
+
+
 create_manifold_parameter = ManifoldShapeFactory.create_manifold_parameter
 StiefelLikeFactory(Stiefel)
 SquareManifoldFactory(PositiveDefinite)
+EuclideanManifoldFactory(Euclidean)
