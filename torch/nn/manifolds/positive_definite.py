@@ -56,6 +56,9 @@ class PositiveDefinite(Manifold):
     def proj(self, X, U):
         return multisym(U)
 
+    def egrad2rgrad(self, X, U):
+        return multiprod(multiprod(X, multisym(U)), X)
+
     def inner(self, X, G1, G2):
         G1s, _ = torch.gesv(G1, X)
         G2s, _ = torch.gesv(G2, X)

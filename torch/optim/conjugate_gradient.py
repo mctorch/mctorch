@@ -106,6 +106,10 @@ class ConjugateGradient(Optimizer):
                             raise ValueError('Unknown beta_type: {}'
                                              .format(beta_type))
                         desc_dir = -1 * grad + beta * desc_dir
+
+                        df0 = torch.sum(grad, desc_dir)
+                        if df0 >= 0:
+                            desc_dir = -1 * grad
                     p.data.add_(group['lr'], desc_dir)
                     state['old_grad'].mul_(0).add_(grad)
                     state['ograd_ograd'] = torch.sum(grad * grad).item()
@@ -166,6 +170,11 @@ class ConjugateGradient(Optimizer):
                             raise ValueError('Unknown beta_type: {}'
                                              .format(beta_type))
                         desc_dir = -1 * grad + beta * desc_dir
+
+                        df0 = p.manifold.inner(p.data, grad, desc_dir)
+                        if df0 >= 0:
+                            desc_dir = -1 * grad
+
                     p.data.add_(p.manifold.retr(p.data,
                                 group['lr'] * desc_dir) - p.data)
                     state['old_grad'].mul_(0).add_(grad)
