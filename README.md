@@ -1,261 +1,125 @@
-![PyTorch Logo](https://github.com/pytorch/pytorch/blob/master/docs/source/_static/img/pytorch-logo-dark.png)
+# McTorch
+McTorch is a Python package that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).  
 
---------------------------------------------------------------------------------
+McTorch:
 
-PyTorch is a Python package that provides two high-level features:
-- Tensor computation (like NumPy) with strong GPU acceleration
-- Deep neural networks built on a tape-based autograd system
+ - Leverages tensor computation and GPU acceleration from PyTorch.
+ - Enables optimization on manifold constrained tensors to address nonlinear optimization problems.
+ - Facilitates constrained weight tensors in deep learning layers.
 
-You can reuse your favorite Python packages such as NumPy, SciPy and Cython to extend PyTorch when needed.
-
-We are in an early-release beta. Expect some adventures and rough edges.
-
-- [More about PyTorch](#more-about-pytorch)
+Sections:
+- [More about McTorch](#more-about-mctorch)
+  - [Using McTorch for Optimization](#using-mctorch-for-optimization)
+  - [Using McTorch for Deep Learning](#using-mctorch-for-deep-learning)
+- [Functionality Supported](#functionality-supported)
 - [Installation](#installation)
-  - [Binaries](#binaries)
-  - [From Source](#from-source)
-  - [Docker Image](#docker-image)
-  - [Previous Versions](#previous-versions)
-- [Getting Started](#getting-started)
-- [Communication](#communication)
-- [Releases and Contributing](#releases-and-contributing)
-- [The Team](#the-team)
+- [Release and Contribution](#release-and-contribution)
+- [Team](#team)
 
-| System | 2.7 | 3.5 |
-| --- | --- | --- |
-| Linux CPU | [![Build Status](https://ci.pytorch.org/jenkins/job/pytorch-master/badge/icon)](https://ci.pytorch.org/jenkins/job/pytorch-master/) | [![Build Status](https://ci.pytorch.org/jenkins/job/pytorch-master/badge/icon)](https://ci.pytorch.org/jenkins/job/pytorch-master/) |
-| Linux GPU | [![Build Status](https://ci.pytorch.org/jenkins/job/pytorch-master/badge/icon)](https://ci.pytorch.org/jenkins/job/pytorch-master/) | [![Build Status](https://ci.pytorch.org/jenkins/job/pytorch-master/badge/icon)](https://ci.pytorch.org/jenkins/job/pytorch-master/) |
-| Windows GPU | <center>—</center> | [![Build Status](https://ci.pytorch.org/jenkins/job/pytorch-builds/job/pytorch-win-ws2016-cuda9-cudnn7-py3-trigger/badge/icon)](https://ci.pytorch.org/jenkins/job/pytorch-builds/job/pytorch-win-ws2016-cuda9-cudnn7-py3-trigger/)
+## More about McTorch
+McTorch builds on top of PyTorch and supports all PyTorch functions in addition to Manifold optimization. This is done to ensure researchers and developers using PyTorch can easily experiment with McTorch functions. McTorch's manifold implementations and optimization methods are derived from the Matlab toolbox [Manpot](http://manopt.org/) and the Python toolbox [Pymanopt](https://pymanopt.github.io/).
 
-See also the [ci.pytorch.org HUD](https://ezyang.github.io/pytorch-ci-hud/build/pytorch-master).
+### Using McTorch for Optimization
 
+1. **Initialize Parameter** - McTorch manifold parameters are same as PyTorch parameters (`torch.nn.Parameter`) and requires just addition of one property to parameter initialization to constrain the parameter values. 
+2. **Define Cost** - Cost function can be any PyTorch function using the above parameter mixed with non constrained parameters.
+3. **Optimize** - Any optimizer from `torch.optim` can be used to optimize the cost function using same functionality as any PyTorch code.
 
-## More about PyTorch
+**PCA Example**
+```python
+import torch
+import torch.nn as nn
 
-At a granular level, PyTorch is a library that consists of the following components:
+# Random data with high variance in first two dimension
+X = torch.diag(torch.FloatTensor([3,2,1])).matmul(torch.randn(3,200))
 
-| Component | Description |
-| ---- | --- |
-| **torch** | a Tensor library like NumPy, with strong GPU support |
-| **torch.autograd** | a tape-based automatic differentiation library that supports all differentiable Tensor operations in torch |
-| **torch.nn** | a neural networks library deeply integrated with autograd designed for maximum flexibility |
-| **torch.multiprocessing** | Python multiprocessing, but with magical memory sharing of torch Tensors across processes. Useful for data loading and Hogwild training |
-| **torch.utils** | DataLoader, Trainer and other utility functions for convenience |
-| **torch.legacy(.nn/.optim)** | legacy code that has been ported over from torch for backward compatibility reasons |
+# 1. Initialize Parameter
+manifold_param = nn.Parameter(manifold=nn.Stiefel(3,2))
 
-Usually one uses PyTorch either as:
+# 2. Define Cost - squared reconstruction error
+def cost(X, w):
+    wTX = torch.matmul(w.transpose(1,0), X)
+    wwTX = torch.matmul(w, wTX)
+    return torch.sum((X - wwTX)**2)
 
-- a replacement for NumPy to use the power of GPUs.
-- a deep learning research platform that provides maximum flexibility and speed
+# 3. Optimize
+optimizer = torch.optim.Adagrad(param = [manifold_param], lr=1e-4)
 
-Elaborating further:
+for epoch in range(30):
+    cost_step = cost(X, manifold_param)
+    print(cost_step)
+    cost_step.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+```
 
-### A GPU-Ready Tensor Library
+### Using McTorch for Deep Learning
+**Multi Layer Perceptron Example**
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-If you use NumPy, then you have used Tensors (a.k.a ndarray).
+# a torch module using constrained linear layers
+class ManifoldMLP(nn.Module):
+    def __init__(self):
+        super(ManifoldMLP, self).__init__()
+        self.layer1 = nn.Linear(in_features=28*28, out_features=100, weight_manifold=nn.Stiefel)
+        self.layer2 = nn.Linear(in_features=100, out_features=100, weight_manifold=nn.PositiveDefinite)
+        self.output = nn.Linear(in_features=100, out_features=10, weight_manifold=nn.Stiefel)
 
-![Tensor illustration](https://github.com/pytorch/pytorch/blob/master/docs/source/_static/img/tensor_illustration.png)
+    def forward(self, x):
+        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
+        x = F.log_softmax(self.output(x), dim=0)
+        return x
 
-PyTorch provides Tensors that can live either on the CPU or the GPU, and accelerate
-compute by a huge amount.
+# create module object and compute cost by applying module on inputs
+mlp_module = ManifoldMLP()
+cost = mlp_module(inputs)
 
-We provide a wide variety of tensor routines to accelerate and fit your scientific computation needs
-such as slicing, indexing, math operations, linear algebra, reductions.
-And they are fast!
+```
 
-### Dynamic Neural Networks: Tape-Based Autograd
+## Functionality Supported
+This would be an ever increasing list of features. McTorch currently supports:
 
-PyTorch has a unique way of building neural networks: using and replaying a tape recorder.
+### Manifolds
+- Stiefel
+- Positive Definite
 
-Most frameworks such as TensorFlow, Theano, Caffe and CNTK have a static view of the world.
-One has to build a neural network, and reuse the same structure again and again.
-Changing the way the network behaves means that one has to start from scratch.
+All manifolds support k multiplier as well.
 
-With PyTorch, we use a technique called reverse-mode auto-differentiation, which allows you to
-change the way your network behaves arbitrarily with zero lag or overhead. Our inspiration comes
-from several research papers on this topic, as well as current and past work such as
-[torch-autograd](https://github.com/twitter/torch-autograd),
-[autograd](https://github.com/HIPS/autograd),
-[Chainer](http://chainer.org), etc.
+### Optimizers
+- SGD
+- Adagrad
+- Conjugate Gradient
 
-While this technique is not unique to PyTorch, it's one of the fastest implementations of it to date.
-You get the best of speed and flexibility for your crazy research.
+### Layers
+- Linear
+- Conv1d, Conv2d, Conv3d
+- Conv1d\_transpose, Conv2d\_transpose, Conv3d\_transpose
 
-![Dynamic graph](https://github.com/pytorch/pytorch/blob/master/docs/source/_static/img/dynamic_graph.gif)
-
-### Python First
-
-PyTorch is not a Python binding into a monolithic C++ framework.
-It is built to be deeply integrated into Python.
-You can use it naturally like you would use NumPy / SciPy / scikit-learn etc.
-You can write your new neural network layers in Python itself, using your favorite libraries
-and use packages such as Cython and Numba.
-Our goal is to not reinvent the wheel where appropriate.
-
-### Imperative Experiences
-
-PyTorch is designed to be intuitive, linear in thought and easy to use.
-When you execute a line of code, it gets executed. There isn't an asynchronous view of the world.
-When you drop into a debugger, or receive error messages and stack traces, understanding them is straightforward.
-The stack trace points to exactly where your code was defined.
-We hope you never spend hours debugging your code because of bad stack traces or asynchronous and opaque execution engines.
-
-### Fast and Lean
-
-PyTorch has minimal framework overhead. We integrate acceleration libraries
-such as Intel MKL and NVIDIA (cuDNN, NCCL) to maximize speed.
-At the core, its CPU and GPU Tensor and neural network backends
-(TH, THC, THNN, THCUNN) are written as independent libraries with a C99 API.
-They are mature and have been tested for years.
-
-Hence, PyTorch is quite fast – whether you run small or large neural networks.
-
-The memory usage in PyTorch is extremely efficient compared to Torch or some of the alternatives.
-We've written custom memory allocators for the GPU to make sure that
-your deep learning models are maximally memory efficient.
-This enables you to train bigger deep learning models than before.
-
-### Extensions without Pain
-
-Writing new neural network modules, or interfacing with PyTorch's Tensor API was designed to be straightforward
-and with minimal abstractions.
-
-You can write new neural network layers in Python using the torch API
-[or your favorite NumPy-based libraries such as SciPy](http://pytorch.org/tutorials/advanced/numpy_extensions_tutorial.html).
-
-If you want to write your layers in C/C++, we provide a convenient extension API that is efficient and with minimal boilerplate.
-There is no wrapper code that needs to be written. You can see [a tutorial here](http://pytorch.org/tutorials/advanced/cpp_extension.html) and [an example here](https://github.com/pytorch/extension-cpp).
 
 
 ## Installation
+This is same as PyTorch installation from source.
 
-### Binaries
-Commands to install from binaries via Conda or pip wheels are on our website:
-
-[http://pytorch.org](http://pytorch.org)
-
-### From Source
-
-If you are installing from source, we highly recommend installing an [Anaconda](https://www.continuum.io/downloads) environment.
-You will get a high-quality BLAS library (MKL) and you get a controlled compiler version regardless of your Linux distro.
-
-Once you have [Anaconda](https://www.continuum.io/downloads) installed, here are the instructions.
-
-If you want to compile with CUDA support, install
-- [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads) 7.5 or above
-- [NVIDIA cuDNN](https://developer.nvidia.com/cudnn) v6.x or above
-
-If you want to disable CUDA support, export environment variable `NO_CUDA=1`.
-Other potentially useful environment variables may be found in `setup.py`.
-
-If you want to build on Windows, Visual Studio 2017 and NVTX are also needed.
-
-#### Install optional dependencies
-
-On Linux
+### Linux
 ```bash
-export CMAKE_PREFIX_PATH="$(dirname $(which conda))/../" # [anaconda root directory]
-
-# Install basic dependencies
-conda install numpy pyyaml mkl mkl-include setuptools cmake cffi typing
-conda install -c mingfeima mkldnn
-
-# Add LAPACK support for the GPU
-conda install -c pytorch magma-cuda80 # or magma-cuda90 if CUDA 9
-```
-
-On macOS
-```bash
-export CMAKE_PREFIX_PATH=[anaconda root directory]
-conda install numpy pyyaml mkl mkl-include setuptools cmake cffi typing
-```
-
-On Windows
-```cmd
-conda install numpy pyyaml mkl mkl-include setuptools cmake cffi typing
-```
-#### Get the PyTorch source
-```bash
-git clone --recursive https://github.com/pytorch/pytorch
-cd pytorch
-```
-
-#### Install PyTorch
-On Linux
-```bash
+git clone --recursive https://github.com/mctorch/mctorch
+cd mctorch
 python setup.py install
 ```
+For other os and optional dependencies go through [Installation](pytorch-README.md#installation)
 
-On macOS
-```bash
-MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ python setup.py install
-```
+## Release and Contribution
+McTorch is currently under development and any contributions, suggestions and feature requests are welcome. We'd closely follow PyTorch stable versions to keep the base updated and will have our own versions for other additions.
 
-On Windows
-```cmd
-set "VS150COMNTOOLS=C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\VC\Auxiliary\Build"
-set CMAKE_GENERATOR=Visual Studio 15 2017 Win64
-set DISTUTILS_USE_SDK=1
-REM The following line is needed for Python 2.7, but the support for it is very experimental.
-set MSSdk=1
-REM As for CUDA 8, VS2015 Update 2 or up is required to build PyTorch. Use the following two lines.
-set "PREBUILD_COMMAND=%VS140COMNTOOLS%\..\..\VC\vcvarsall.bat"
-set PREBUILD_COMMAND_ARGS=x64
+McTorch is released under the open source [3-clause BSD License](LICENSE).
 
-call "%VS150COMNTOOLS%\vcvarsall.bat" x64 -vcvars_ver=14.11
-python setup.py install
-```
-
-### Docker image
-
-Dockerfile is supplied to build images with cuda support and cudnn v7. Build as usual
-```
-docker build -t pytorch -f docker/pytorch/Dockerfile .
-```
-
-You can also pull a pre-built docker image from Docker Hub and run with nvidia-docker,
-but this is not currently maintained and will pull PyTorch 0.2.
-```
-nvidia-docker run --rm -ti --ipc=host pytorch/pytorch:latest
-```
-Please note that PyTorch uses shared memory to share data between processes, so if torch multiprocessing is used (e.g.
-for multithreaded data loaders) the default shared memory segment size that container runs with is not enough, and you
-should increase shared memory size either with `--ipc=host` or `--shm-size` command line options to `nvidia-docker run`.
-
-### Previous Versions
-
-Installation instructions and binaries for previous PyTorch versions may be found
-on [our website](http://pytorch.org/previous-versions/).
-
-
-## Getting Started
-
-Three pointers to get you started:
-- [Tutorials: get you started with understanding and using PyTorch](https://pytorch.org/tutorials/)
-- [Examples: easy to understand pytorch code across all domains](https://github.com/pytorch/examples)
-- [The API Reference](http://pytorch.org/docs/)
-
-## Communication
-* forums: discuss implementations, research, etc. http://discuss.pytorch.org
-* GitHub issues: bug reports, feature requests, install issues, RFCs, thoughts, etc.
-* Slack: general chat, online discussions, collaboration etc. https://pytorch.slack.com/ . Our slack channel is invite-only to promote a healthy balance between power-users and beginners. If you need a slack invite, ping us at slack@pytorch.org
-* newsletter: no-noise, one-way email newsletter with important announcements about pytorch. You can sign-up here: http://eepurl.com/cbG0rv
-
-## Releases and Contributing
-
-PyTorch has a 90 day release cycle (major releases).
-Its current state is Beta, we expect no obvious bugs. Please let us know if you encounter a bug by [filing an issue](https://github.com/pytorch/pytorch/issues).
-
-We appreciate all contributions. If you are planning to contribute back bug-fixes, please do so without any further discussion.
-
-If you plan to contribute new features, utility functions or extensions to the core, please first open an issue and discuss the feature with us.
-Sending a PR without discussion might end up resulting in a rejected PR, because we might be taking the core in a different direction than you might be aware of.
-
-## The Team
-
-PyTorch is a community driven project with several skillful engineers and researchers contributing to it.
-
-PyTorch is currently maintained by [Adam Paszke](https://apaszke.github.io/), [Sam Gross](https://github.com/colesbury), [Soumith Chintala](http://soumith.ch) and [Gregory Chanan](https://github.com/gchanan) with major contributions coming from 10s of talented individuals in various forms and means.
-A non-exhaustive but growing list needs to mention: Trevor Killeen, Sasank Chilamkurthy, Sergey Zagoruyko, Adam Lerer, Francisco Massa, Alykhan Tejani, Luca Antiga, Alban Desmaison, Andreas Kopf, James Bradbury, Zeming Lin, Yuandong Tian, Guillaume Lample, Marat Dukhan, Natalia Gimelshein, Christian Sarofeen, Martin Raison, Edward Yang, Zachary Devito.
-
-Note: this project is unrelated to [hughperkins/pytorch](https://github.com/hughperkins/pytorch) with the same name. Hugh is a valuable contributor in the Torch community and has helped with many things Torch and PyTorch.
+## Team 
+- [Mayank Meghwanshi](https://github.com/mayank127/)
+- [Bamdev Mishra](https://github.com/bamdevm)
+- [Pratik Jawanpuria](https://pratikjawanpuria.com)
+- [Hiroyuki Kasai](https://github.com/hiroyuki-kasai)
+- [Anoop Kunchukuttan](https://github.com/anoopkunchukuttan)
