@@ -98,7 +98,7 @@ class SGD(Optimizer):
             for p in group['params']:
                 if p.grad is None:
                     continue
-                if p.manifold is None:
+                if not hasattr(p, 'manifold') or p.manifold is None:
                     d_p = p.grad
                     if weight_decay != 0:
                         d_p = d_p.add(p, alpha=weight_decay)
