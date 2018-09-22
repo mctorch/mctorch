@@ -72,7 +72,7 @@ class Adagrad(Optimizer):
 
                 state['step'] += 1
 
-                if p.manifold is None:
+                if not hasattr(p, 'manifold') or p.manifold is None:
                     if group['weight_decay'] != 0:
                         if p.grad.is_sparse:
                             raise RuntimeError("weight_decay option is not compatible with sparse gradients")
@@ -100,6 +100,8 @@ class Adagrad(Optimizer):
                         std = state['sum'].sqrt().add_(group['eps'])
                         p.addcdiv_(grad, std, value=-clr)
                 else:
+                    if grad.is_sparse:
+                        raise RuntimeError('Adagrad with manifold doesn\'t support sparse gradients')
                     rgrad = p.rgrad.data
                     state['sum'].add_(rgrad.pow(2))
                     std = state['sum'].sqrt().add_(1e-10)
