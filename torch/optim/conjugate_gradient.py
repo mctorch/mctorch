@@ -54,7 +54,7 @@ class ConjugateGradient(Optimizer):
                 ograd_ograd = state['ograd_ograd']
                 old_norm = state['old_norm']
 
-                if p.manifold is None:
+                if not hasattr(p, 'manifold') or p.manifold is None:
                     # euclidean manifold case
                     grad_grad = torch.sum(grad * grad)
                     if abs(grad_grad) > 0:
