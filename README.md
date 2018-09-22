@@ -43,7 +43,7 @@ def cost(X, w):
     return torch.sum((X - wwTX)**2)
 
 # 3. Optimize
-optimizer = torch.optim.Adagrad(param = [manifold_param], lr=1e-4)
+optimizer = torch.optim.Adagrad(params = [manifold_param], lr=1e-4)
 
 for epoch in range(30):
     cost_step = cost(X, manifold_param)
