@@ -17,7 +17,7 @@ Sections:
 - [Team](#team)
 
 ## More about McTorch
-McTorch builds on top of PyTorch and supports all PyTorch functions in addition to Manifold optimization. This is done to ensure researchers and developers using PyTorch can easily experiment with McTorch functions. McTorch's manifold implementations and optimization methods are derived from the Matlab toolbox [Manpot](http://manopt.org/) and the Python toolbox [Pymanopt](https://pymanopt.github.io/).
+McTorch builds on top of PyTorch and supports all PyTorch functions in addition to Manifold optimization. This is done to ensure researchers and developers using PyTorch can easily experiment with McTorch functions. McTorch's manifold implementations and optimization methods are derived from the Matlab toolbox [Manopt](http://manopt.org/) and the Python toolbox [Pymanopt](https://pymanopt.github.io/).
 
 ### Using McTorch for Optimization
 
