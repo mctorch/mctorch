@@ -1,8 +1,10 @@
 # McTorch
-McTorch is a Python package that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).  
+
+## McTorch, a manifold optimization library for deep learning 
+
+McTorch is a Python library that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).  
 
 McTorch:
-
  - Leverages tensor computation and GPU acceleration from PyTorch.
  - Enables optimization on manifold constrained tensors to address nonlinear optimization problems.
  - Facilitates constrained weight tensors in deep learning layers.
