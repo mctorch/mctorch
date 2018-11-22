@@ -1,6 +1,4 @@
-# McTorch
-
-## McTorch, a manifold optimization library for deep learning 
+# McTorch, a manifold optimization library for deep learning 
 
 McTorch is a Python library that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).  
 
@@ -95,7 +93,7 @@ All manifolds support k multiplier as well.
 ### Optimizers
 - SGD
 - Adagrad
-- Conjugate Gradient
+- ConjugateGradient
 
 ### Layers
 - Linear
@@ -147,7 +145,7 @@ McTorch is released under the open source [3-clause BSD License](LICENSE).
 - [Anoop Kunchukuttan](https://github.com/anoopkunchukuttan)
 
 ## Reference
-Please consider citing [[1]](https://arxiv.org/abs/1810.01811) if you found this code useful.
+Please cite [1](https://arxiv.org/abs/1810.01811) if you found this code useful.
 #### McTorch, a manifold optimization library for deep learning
 [1] M. Meghawanshi, P. Jawanpuria, A. Kunchukuttan, H. Kasai, and B. Mishra, [McTorch, a manifold optimization library for deep learning](https://arxiv.org/abs/1810.01811)
 
