@@ -8,8 +8,8 @@ cat >/Users/distiller/project/login_to_anaconda.sh <<EOL
 set +x
 echo "Trying to login to Anaconda"
 yes | anaconda login \
-    --username "$PYTORCH_BINARY_PJH5_CONDA_USERNAME" \
-    --password "$PYTORCH_BINARY_PJH5_CONDA_PASSWORD"
+    --username "$PYTORCH_BINARY_SOUMITH_CONDA_USERNAME" \
+    --password "$PYTORCH_BINARY_SOUMITH_CONDA_PASSWORD"
 set -x
 EOL
 chmod +x /Users/distiller/project/login_to_anaconda.sh

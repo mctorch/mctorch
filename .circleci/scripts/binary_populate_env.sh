@@ -55,11 +55,15 @@ fi
 
 # We put this here so that OVERRIDE_PACKAGE_VERSION below can read from it
 export DATE="$(date -u +%Y%m%d)"
+<<<<<<< ec3d362802e69b989144bd393163a83f5b92caeb
 if [[ "$(uname)" == 'Darwin' ]] || [[ "$DESIRED_CUDA" == "cu100" ]] || [[ "$PACKAGE_TYPE" == conda ]]; then
   export PYTORCH_BUILD_VERSION="1.3.0.dev$DATE"
 else
   export PYTORCH_BUILD_VERSION="1.3.0.dev$DATE+$DESIRED_CUDA"
 fi
+=======
+export PYTORCH_BUILD_VERSION="1.1.0"
+>>>>>>> fix env for binary builds
 export PYTORCH_BUILD_NUMBER=1
 
 cat >>"$envfile" <<EOL
@@ -80,9 +84,14 @@ export PYTORCH_BUILD_VERSION="$PYTORCH_BUILD_VERSION"
 export PYTORCH_BUILD_NUMBER="$PYTORCH_BUILD_NUMBER"
 export OVERRIDE_PACKAGE_VERSION="$PYTORCH_BUILD_VERSION"
 
+<<<<<<< ec3d362802e69b989144bd393163a83f5b92caeb
 # TODO: We don't need this anymore IIUC
 export TORCH_PACKAGE_NAME='torch'
 export TORCH_CONDA_BUILD_FOLDER='pytorch-nightly'
+=======
+export TORCH_PACKAGE_NAME='torch'
+export TORCH_CONDA_BUILD_FOLDER='pytorch'
+>>>>>>> fix env for binary builds
 
 export USE_FBGEMM=1
 export PIP_UPLOAD_FOLDER="$PIP_UPLOAD_FOLDER"
