@@ -275,8 +275,8 @@ if os.getenv('PYTORCH_BUILD_VERSION'):
     version = os.getenv('PYTORCH_BUILD_VERSION')
     if build_number > 1:
         version += '.post' + str(build_number)
-elif sha != 'Unknown':
-    version += '+' + sha[:7]
+# elif sha != 'Unknown':
+#     version += '+' + sha[:7]
 report("Building wheel {}-{}".format(package_name, version))
 
 cmake = CMake()
