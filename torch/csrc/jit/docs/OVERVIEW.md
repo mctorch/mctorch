@@ -1272,6 +1272,7 @@ def forward(self,
   return x0
 ```
 
+README.md
 # Python Bindings
 
 TODO: Script Module, torch.jit.trace, __constant__ handling, weak script modules

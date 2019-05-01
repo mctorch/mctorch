@@ -427,6 +427,7 @@ Example (a type mismatch)
 .. testcode::
 
     import torch
+Example (a type mismatch)::
 
     @torch.jit.script
     def an_error(x):
@@ -578,7 +579,6 @@ a local variable to be refined.
 Example (refining types on parameters and locals):
 
 .. testcode::
-
     import torch
     import torch.nn as nn
     from typing import Optional
@@ -1248,6 +1248,31 @@ Example:
 
     |
 
+Module Attributes
+^^^^^^^^^^^^^^^^^
+
+The ``torch.nn.Parameter`` wrapper and ``register_buffer`` can be used to assign
+tensors to a ``ScriptModule``. In a similar vein, attributes of any type can be
+assign on a ``ScriptModule`` by wrapping them with ``torch.jit.Attribute`` and
+specifying the type. All types available in TorchScript are supported. These
+attributes are mutable and are saved in a separate archive in the serialized
+model binary. Tensor attributes are semantically the same as buffers.
+
+Example::
+
+    class Foo(torch.jit.ScriptModule):
+      def __init__(self, a_dict):
+        super(Foo, self).__init__(False)
+        self.words = torch.jit.Attribute([], List[str])
+        self.some_dict = torch.jit.Attribute(a_dict, Dict[str, int])
+
+      @torch.jit.script_method
+      def forward(self, input):
+        # type: (str) -> int
+        self.words.append(input)
+        return self.some_dict[input]
+
+
 Debugging
 ~~~~~~~~~
 
@@ -1290,7 +1315,6 @@ Disable JIT for Debugging
     and we will be able to step into the ``@torch.jit.script`` function as a normal Python
     function. To disable the TorchScript compiler for a specific function, see
     :func:`@torch.jit.ignore <torch.jit.ignore>`.
-
 
 Inspecting Code
 ^^^^^^^^^^^^^^^
@@ -1636,7 +1660,6 @@ best practices?
 
 
 Q: How do I store attributes on a ``ScriptModule``?
-
     Say we have a model like:
 
     .. testcode::

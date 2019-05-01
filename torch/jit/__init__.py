@@ -243,6 +243,59 @@ def load(f, map_location=None, _extra_files=DEFAULT_EXTRA_FILES_MAP):
     return ScriptModule(_cpp_module=cpp_module)
 
 
+def save(m, f, _extra_files=DEFAULT_EXTRA_FILES_MAP):
+    """
+        Save an offline version of this module for use in a separate process. The saved
+        module serializes all of the methods, submodules, parameters, and attributes of this
+        module. It can be loaded into the C++ API using ``torch::jit::load(filename)`` or into the Python
+        API with ``torch.jit.load(filename)``.
+
+        To be able to save a module, it must not make any calls to native Python functions.
+        This means that all submodules must be subclasses of ``torch.jit.ScriptModule`` as well.
+
+        .. DANGER::
+           All modules, no matter their device, are always loaded onto the CPU during loading.
+           This is different from :func:`torch.load`'s semantics and may change in the future.
+
+        Arguments:
+            m: a ScriptModule to save
+            f: a file-like object (has to implement write and flush) or a string
+               containing a file name
+            _extra_files: Map from filename to contents which will be stored as part of 'f'
+
+        .. warning::
+            If you are using Python 2, ``torch.save`` does NOT support ``StringIO.StringIO``
+            as a valid file-like object. This is because the write method should return
+            the number of bytes written; ``StringIO.write()`` does not do this.
+
+            Please use something like ``io.BytesIO`` instead.
+
+        Example: ::
+
+            m = torch.jit.ScriptModule()
+
+            # Save to file
+            torch.jit.save(m, 'scriptmodule.pt')
+
+            # Save to io.BytesIO buffer
+            buffer = io.BytesIO()
+            torch.jit.save(m, buffer)
+
+            # Save with extra files
+            extra_files = torch._C.ExtraFilesMap()
+            extra_files['foo.txt'] = 'bar'
+            torch.jit.save(m, 'scriptmodule.pt', _extra_files=extra_files)
+    """
+    if isinstance(f, str) or \
+            (sys.version_info[0] == 2 and isinstance(f, unicode)) or \
+            (sys.version_info[0] == 3 and isinstance(f, pathlib.Path)):
+        m.save(f, _extra_files=_extra_files)
+    else:
+        ret = m.save_to_buffer(_extra_files=_extra_files)
+        f.write(ret)
+>>>>>>> [jit] Document new features, fix some rst bugs (#19974)
+
+
 def get_trace_graph(f, args=(), kwargs=None, _force_outplace=False,
                     return_inputs=False, _return_inputs_states=False):
     """
