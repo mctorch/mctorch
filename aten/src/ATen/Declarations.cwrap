@@ -1,36 +1,10 @@
 [[
-  name: storageOffset
-  python_name: storage_offset
-  cpu_half: True
-  device_guard: False
-  return: long
-  arguments:
-    - THTensor* self
-]]
-[[
-  name: nDimension
-  python_name: ndimension
-  cpu_half: True
-  device_guard: False
-  return: long
-  arguments:
-    - THTensor* self
-]]
-[[
-  name: resize_
-  return: self
-  cname: resize
-  cpu_half: True
-  arguments:
-    - THTensor* self
-    - arg: THSize* size
-      long_args: True
-    - CONSTANT NULL
-]]
-[[
-  name: set_
+  name: _th_set_
   cname: set
+  variants: function
   cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   device_guard: False
   return: argument 0
   options:
@@ -43,28 +17,32 @@
       scalar_check: False
       arguments:
         - THTensor* self
-        - CONSTANT NULL, 0, THLongStorageView({0}, THLongStorageViewKind::SIZE), NULL
+        - CONSTANT NULL, 0, {0}, {}
     - cname: setStorage
       scalar_check: False
       arguments:
         - THTensor* self
         - THStorage* source
         - CONSTANT 0
-        - CONSTANT __storage_size.get()
-        - CONSTANT NULL
+        - CONSTANT {static_cast<int64_t>(source.size())}
+        - CONSTANT {}
     - cname: setStorage
       arguments:
         - THTensor* self
         - THStorage* source
         - long storage_offset
-        - THSize* size
-        - arg: THStride* stride
-          default: NULL
+        - IntArrayRefSize size
+        - arg: IntArrayRef stride
+          default: {}
 ]]
 [[
-  name: _fill_
+  name: _th_fill_
   return: self
   cname: fill
+  variants: function
+  cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   options:
     - arguments:
       - THTensor* self
@@ -75,18 +53,13 @@
       - THTensor* value
 ]]
 [[
-  name: isContiguous
-  python_name: is_contiguous
+  name: _th_is_set_to
+  cname: isSetTo
+  variants:
+    - function
   cpu_half: True
-  device_guard: False
-  return: bool
-  arguments:
-    - THTensor* self
-]]
-[[
-  name: isSetTo
-  python_name: is_set_to
-  cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   device_guard: False
   return: bool
   arguments:
@@ -94,39 +67,38 @@
     - THTensor* tensor
 ]]
 [[
-  name: maskedFill_
+  name: _th_masked_fill_
   cname: maskedFill
-  python_name: masked_fill_
+  variants: function
   return: self
   options:
     - arguments:
       - arg: THTensor* self
         broadcast: mask inplace fallback types:Byte
-      - THBoolTensor* mask
+      - THByteTensor* mask
       - real value
     - zero_dim_tensor_only: True
       arguments:
       - arg: THTensor* self
         broadcast: mask inplace fallback types:Byte
-      - THBoolTensor* mask
+      - THByteTensor* mask
       - THTensor* value
 ]]
 [[
-  name: maskedCopy_
+  name: _th_masked_scatter_
   cname: maskedCopy
-  python_name: masked_scatter_
+  variants: function
   return: self
   arguments:
     - arg: THTensor* self
       broadcast: mask inplace fallback types:Byte
-    - THBoolTensor* mask
+    - THByteTensor* mask
     - THTensor* source
 ]]
 [[
-  name: maskedSelect
-  python_name: masked_select
+  name: _th_masked_select
+  cname: maskedSelect
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -134,12 +106,14 @@
       output: True
     - arg: THTensor* self
       broadcast: mask fallback types:Byte
-    - THBoolTensor* mask
+    - THByteTensor* mask
 ]]
 [[
-  name: nonzero
+  name: _th_nonzero
+  cname: nonzero
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -148,36 +122,38 @@
     - THTensor* self
 ]]
 [[
-  name: contiguous
-  cname: newContiguous
-  return: THTensor*
-  arguments:
-    - THTensor* self
-]]
-[[
-  name: th_clone
+  name: _th_clone
   cname: newClone
   return: THTensor*
   variants:
     - function
   cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   arguments:
     - THTensor* self
 ]]
 [[
-  name: view
+  name: _th_view
   cname: newView
+  cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
+  variants:
+    - function
   device_guard: False
   return: THTensor*
   arguments:
     - THTensor* self
-    - arg: THSize* size
+    - arg: IntArrayRefSize size
       long_args: True
 ]]
 [[
-  name: resizeAs_
-  python_name: th_resize_as_
+  name: _th_resize_as_
   cname: resizeAs
+  cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   variants:
     - function
   return: self
@@ -187,10 +163,9 @@
     - THTensor* the_template
 ]]
 [[
-  name: indexSelect
-  python_name: index_select
+  name: _th_index_select
+  cname: indexSelect
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -202,8 +177,9 @@
     - THIndexTensor* index
 ]]
 [[
-  name: _indexCopy_
+  name: _th_index_copy_
   cname: indexCopy
+  variants: function
   return: argument 0
   arguments:
     - THTensor* self
@@ -213,10 +189,9 @@
     - THTensor* source
 ]]
 [[
-  name: take
+  name: _th_take
   cname: take
   variants:
-    - method
     - function
   return: argument 0
   scalar_check: index_->dim() == 0
@@ -227,8 +202,9 @@
     - THIndexTensor* index
 ]]
 [[
-  name: put_
+  name: _th_put_
   cname: put
+  variants: function
   backends:
     - CPU
     - CUDA
@@ -241,9 +217,9 @@
       default: "false"
 ]]
 [[
-  name: indexAdd_
-  python_name: index_add_
+  name: _th_index_add_
   cname: indexAdd
+  variants: function
   return: argument 0
   arguments:
     - THTensor* self
@@ -253,9 +229,9 @@
     - THTensor* source
 ]]
 [[
-  name: indexFill_
-  python_name: index_fill_
+  name: _th_index_fill_
   cname: indexFill
+  variants: function
   return: argument 0
   options:
     - arguments:
@@ -273,8 +249,13 @@
         - THTensor* value
 ]]
 [[
-  name: unfold
+  name: _th_unfold
+  cname: unfold
+  variants:
+    - function
   cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   device_guard: False
   return: argument 0
   arguments:
@@ -287,50 +268,9 @@
     - long step
 ]]
 [[
-  name: _range
-  cname: range
-  variants:
-    - function
-  backends:
-    - CPU
-    - CUDA
+  name: _th_scatter_
   return: argument 0
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - accreal start
-    - accreal end
-    - arg: accreal step
-      default: 1
-]]
-[[
-  name: _arange
-  variants:
-    - function
-  backends:
-    - CPU
-    - CUDA
-  return: argument 0
-  options:
-    - cname: arange
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - accreal start
-        - accreal end
-        - arg: accreal step
-          default: 1
-    - cname: arange
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - CONSTANT 0
-        - accreal end
-        - CONSTANT 1
-]]
-[[
-  name: scatter_
-  return: argument 0
+  variants: function
   options:
     - cname: scatter
       arguments:
@@ -348,9 +288,10 @@
         - real value
 ]]
 [[
-  name: scatter_add_
+  name: _th_scatter_add_
   return: argument 0
   cname: scatterAdd
+  variants: function
   arguments:
     - THTensor* self
     - arg: long dim
@@ -359,9 +300,9 @@
     - THTensor* src
 ]]
 [[
-  name: gather
+  name: _th_gather
+  cname: gather
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -374,19 +315,10 @@
     - THIndexTensor* index
 ]]
 [[
-  name: data_ptr
-  with_gil: True
-  device_guard: False
-  return: void*
-  cpu_half: True
-  cname: data
-  arguments:
-    - THTensor* self
-]]
-[[
-  name: equal
+  name: _th_equal
+  cpu_bool: True
+  cname: equal
   variants:
-    - method
     - function
   return: bool
   arguments:
@@ -394,9 +326,9 @@
     - THTensor* other
 ]]
 [[
-  name: __and__
+  name: _th_and
+  cname: __and__
   variants:
-    - method
     - function
   return: argument 0
   options:
@@ -415,9 +347,10 @@
         - THTensor* other
 ]]
 [[
-  name: __iand__
+  name: _th_iand_
+  cname: __iand__
   variants:
-    - method
+    - function
   return: argument 0
   options:
     - cname: bitand
@@ -433,9 +366,9 @@
         - THTensor* other
 ]]
 [[
-  name: __or__
+  name: _th_or
+  cname: __or__
   variants:
-    - method
     - function
   return: argument 0
   options:
@@ -454,9 +387,10 @@
         - THTensor* other
 ]]
 [[
-  name: __ior__
+  name: _th_ior_
+  cname: __ior__
   variants:
-    - method
+    - function
   return: argument 0
   options:
     - cname: bitor
@@ -472,9 +406,9 @@
         - THTensor* other
 ]]
 [[
-  name: __xor__
+  name: _th_xor
+  cname: __xor__
   variants:
-    - method
     - function
   return: argument 0
   options:
@@ -493,9 +427,10 @@
         - THTensor* other
 ]]
 [[
-  name: __ixor__
+  name: _th_ixor_
+  cname: __ixor__
   variants:
-    - method
+    - function
   return: argument 0
   options:
     - cname: bitxor
@@ -511,9 +446,9 @@
         - THTensor* other
 ]]
 [[
-  name: __lshift__
+  name: _th_lshift
+  cname: __lshift__
   variants:
-    - method
     - function
   return: argument 0
   options:
@@ -532,9 +467,10 @@
         - THTensor* other
 ]]
 [[
-  name: __ilshift__
+  name: _th_ilshift_
+  cname:: __ilshift__
   variants:
-    - method
+    - function
   return: argument 0
   options:
     - cname: lshift
@@ -550,9 +486,9 @@
         - THTensor* other
 ]]
 [[
-  name: __rshift__
+  name: _th_rshift
+  cname: __rshift__
   variants:
-    - method
     - function
   return: argument 0
   options:
@@ -571,9 +507,10 @@
         - THTensor* other
 ]]
 [[
-  name: __irshift__
+  name: _th_irshift_
+  cname: __irshift__
   variants:
-    - method
+    - function
   return: argument 0
   options:
     - cname: rshift
@@ -589,29 +526,33 @@
         - THTensor* other
 ]]
 [[
-  name: lt
+  name: _th_lt
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   options:
     - cname: ltValue
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - THTensor* self
         - real other
     - cname: ltTensor
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - arg: THTensor* self
           broadcast: other fallback
         - THTensor* other
 ]]
 [[
-  name: lt_
+  name: _th_lt_
+  cpu_bool: True
+  cuda_bool: True
   return: self
+  variants: function
   options:
     - cname: ltValueT
       arguments:
@@ -626,29 +567,33 @@
         - arg: THTensor* other
 ]]
 [[
-  name: gt
+  name: _th_gt
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   options:
     - cname: gtValue
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - THTensor* self
         - real other
     - cname: gtTensor
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - arg: THTensor* self
           broadcast: other fallback
         - THTensor* other
 ]]
 [[
-  name: gt_
+  name: _th_gt_
+  cpu_bool: True
+  cuda_bool: True
   return: self
+  variants: function
   options:
     - cname: gtValueT
       arguments:
@@ -663,29 +608,33 @@
         - THTensor* other
 ]]
 [[
-  name: le
+  name: _th_le
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   options:
     - cname: leValue
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - THTensor* self
         - real other
     - cname: leTensor
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - arg: THTensor* self
           broadcast: other fallback
         - THTensor* other
 ]]
 [[
-  name: le_
+  name: _th_le_
+  cpu_bool: True
+  cuda_bool: True
   return: self
+  variants: function
   options:
     - cname: leValueT
       arguments:
@@ -700,29 +649,33 @@
         - THTensor* other
 ]]
 [[
-  name: ge
+  name: _th_ge
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   options:
     - cname: geValue
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - THTensor* self
         - real other
     - cname: geTensor
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - arg: THTensor* self
           broadcast: other fallback
         - THTensor* other
 ]]
 [[
-  name: ge_
+  name: _th_ge_
+  cpu_bool: True
+  cuda_bool: True
   return: self
+  variants: function
   options:
     - cname: geValueT
       arguments:
@@ -737,29 +690,33 @@
         - THTensor* other
 ]]
 [[
-  name: eq
+  name: _th_eq
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   options:
     - cname: eqValue
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - THTensor* self
         - real other
     - cname: eqTensor
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - arg: THTensor* self
           broadcast: other fallback
         - THTensor* other
 ]]
 [[
-  name: eq_
+  name: _th_eq_
+  cpu_bool: True
+  cuda_bool: True
   return: self
+  variants: function
   options:
     - cname: eqValueT
       arguments:
@@ -774,29 +731,33 @@
         - THTensor* other
 ]]
 [[
-  name: ne
+  name: _th_ne
+  cpu_bool: True
+  cuda_bool: True
   variants:
-    - method
     - function
   return: argument 0
   options:
     - cname: neValue
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - THTensor* self
         - real other
     - cname: neTensor
       arguments:
-        - arg: THBoolTensor* result
+        - arg: THByteTensor* result
           output: True
         - arg: THTensor* self
           broadcast: other fallback
         - THTensor* other
 ]]
 [[
-  name: ne_
+  name: _th_ne_
+  cpu_bool: True
+  cuda_bool: True
   return: self
+  variants: function
   options:
     - cname: neValueT
       arguments:
@@ -811,9 +772,8 @@
         - THTensor* other
 ]]
 [[
-  name: min
+  name: _th_min
   variants:
-    - method
     - function
   options:
     - cname: minall
@@ -831,9 +791,7 @@
 ]]
 [[
   name: _th_min
-  variants:
-    - method
-    - function
+  variants: function
   options:
     - cname: min
       return: argument 0,1
@@ -850,9 +808,8 @@
           default: "false"
 ]]
 [[
-  name: max
+  name: _th_max
   variants:
-    - method
     - function
   options:
     - cname: maxall
@@ -870,9 +827,7 @@
 ]]
 [[
   name: _th_max
-  variants:
-    - method
-    - function
+  variants: function
   options:
     - cname: max
       return: argument 0,1
@@ -889,33 +844,8 @@
           default: "false"
 ]]
 [[
-  name: _th_kthvalue
-  backends:
-    - CPU
-  variants:
-    - method
-    - function
-  cname: kthvalue
-  return: argument 0,1
-  scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-  arguments:
-    - arg: THTensor* values
-      output: True
-    - arg: THIndexTensor* indices
-      output: True
-    - THTensor* self
-    - long k
-    - arg: long dim
-      wrap_dim: self
-      default: __last_dim
-    - arg: bool keepdim
-      default: "false"
-]]
-[[
   name: _th_mode
-  variants:
-    - method
-    - function
+  variants: function
   cname: mode
   return: argument 0,1
   scalar_check: self_->dim() == 0|| (keepdim == false && self_->dim() == 1)
@@ -932,42 +862,9 @@
       default: "false"
 ]]
 [[
-  name: median
+  name: _th_sort
+  cname: sort
   variants:
-    - method
-    - function
-  return: argument 0,1
-  options:
-    - cname: medianall
-      return: real
-      arguments:
-        - THTensor* self
-]]
-[[
-  name: _th_median
-  variants:
-    - method
-    - function
-  cname: median
-  return: argument 0,1
-  options:
-    - cname: median
-      scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-      arguments:
-        - arg: THTensor* values
-          output: True
-        - arg: THIndexTensor* indices
-          output: True
-        - THTensor* self
-        - arg: long dim
-          wrap_dim: self
-        - arg: bool keepdim
-          default: "false"
-]]
-[[
-  name: sort
-  variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -983,9 +880,9 @@
       default: "false"
 ]]
 [[
-  name: topk
+  name: _th_topk
+  cname: topk
   variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -1004,109 +901,11 @@
       default: "true"
 ]]
 [[
-  name: all
-  types:
-    - Byte
-  variants:
-    - method
-    - function
-  backends:
-    - CPU
-    - CUDA
-  options:
-    - cname: logicalAndAll
-      return: real
-      arguments:
-        - THTensor* self
-]]
-[[
-  name: _th_all
-  types:
-    - Byte
-  variants:
-    - method
-    - function
-  backends:
-    - CPU
-    - CUDA
-  options:
-    - cname: logicalAnd
-      return: argument 0
-      scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - THTensor* self
-        - arg: long dim
-          wrap_dim: self
-        - arg: bool keepdim
-          default: "false"
-]]
-[[
-  name: any
-  types:
-    - Byte
-  variants:
-    - method
-    - function
-  backends:
-    - CPU
-    - CUDA
-  options:
-    - cname: logicalAnyAll
-      return: real
-      arguments:
-        - THTensor* self
-]]
-[[
-  name: _th_any
-  types:
-    - Byte
-  variants:
-    - method
-    - function
-  backends:
-    - CPU
-    - CUDA
-  options:
-    - cname: logicalAny
-      return: argument 0
-      scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - THTensor* self
-        - arg: long dim
-          wrap_dim: self
-        - arg: bool keepdim
-          default: "false"
-]]
-[[
-  name: getDevice
-  python_name: _th_get_device
-  device_guard: False
-  variants:
-    - function
-  backends:
-    - CUDA
-  return: long
-  arguments:
-    - THTensor* self
-]]
-[[
-  name: _abs
+  name: _th_abs
   cname: abs
-  types:
-    - floating_point
-    - Long
-    - Int
-    - Short
   backends:
-    - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1120,9 +919,7 @@
   backends:
     - CUDA
   cname: sigmoid
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1130,15 +927,13 @@
     - THTensor* self
 ]]
 [[
-  name: _log
+  name: _th_log
   cname: log
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1146,16 +941,13 @@
     - THTensor* self
 ]]
 [[
-  name: _log10
+  name: _th_log10
   cname: log10
   types:
     - floating_point
   backends:
-    - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1163,15 +955,13 @@
     - THTensor* self
 ]]
 [[
-  name: _log1p
+  name: _th_log1p
   cname: log1p
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1179,16 +969,13 @@
     - THTensor* self
 ]]
 [[
-  name: _log2
+  name: _th_log2
   cname: log2
   types:
     - floating_point
   backends:
-    - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1196,14 +983,14 @@
     - THTensor* self
 ]]
 [[
-  name: lgamma
+  name: _th_lgamma
+  cname: lgamma
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -1212,27 +999,28 @@
     - THTensor* self
 ]]
 [[
-  name: lgamma_
+  name: _th_lgamma_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: lgamma
+  variants: function
   return: self
   arguments:
     - THTensor* self
     - THTensor* self
 ]]
 [[
-  name: digamma
+  name: _th_digamma
+  cname: digamma
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -1241,27 +1029,28 @@
     - THTensor* self
 ]]
 [[
-  name: digamma_
+  name: _th_digamma_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: digamma
+  variants: function
   return: self
   arguments:
     - THTensor* self
     - THTensor* self
 ]]
 [[
-  name: polygamma
+  name: _th_polygamma
+  cname: polygamma
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -1271,13 +1060,14 @@
     - THTensor* self
 ]]
 [[
-  name: polygamma_
+  name: _th_polygamma_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: polygamma
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -1285,15 +1075,13 @@
     - THTensor* self
 ]]
 [[
-  name: _exp
+  name: _th_exp
   cname: exp
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1301,15 +1089,13 @@
     - THTensor* self
 ]]
 [[
-  name: _expm1
+  name: _th_expm1
   cname: expm1
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1317,15 +1103,13 @@
     - THTensor* self
 ]]
 [[
-  name: _cos
+  name: _th_cos
   cname: cos
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1333,15 +1117,13 @@
     - THTensor* self
 ]]
 [[
-  name: _acos
+  name: _th_acos
   cname: acos
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1349,16 +1131,14 @@
     - THTensor* self
 ]]
 [[
-  name: _cosh
+  name: _th_cosh
   cname: cosh
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1366,15 +1146,13 @@
     - THTensor* self
 ]]
 [[
-  name: _sin
+  name: _th_sin
   cname: sin
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1382,15 +1160,13 @@
     - THTensor* self
 ]]
 [[
-  name: _asin
+  name: _th_asin
   cname: asin
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1398,16 +1174,14 @@
     - THTensor* self
 ]]
 [[
-  name: _sinh
+  name: _th_sinh
   cname: sinh
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1415,15 +1189,13 @@
     - THTensor* self
 ]]
 [[
-  name: _tan
+  name: _th_tan
   cname: tan
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1431,15 +1203,13 @@
     - THTensor* self
 ]]
 [[
-  name: _atan
+  name: _th_atan
   cname: atan
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1453,9 +1223,7 @@
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1463,15 +1231,13 @@
     - THTensor* self
 ]]
 [[
-  name: _erf
+  name: _th_erf
   cname: erf
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1479,15 +1245,13 @@
     - THTensor* self
 ]]
 [[
-  name: _erfc
+  name: _th_erfc
   cname: erfc
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1495,27 +1259,28 @@
     - THTensor* self
 ]]
 [[
-  name: erfinv_
+  name: _th_erfinv_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: erfinv
+  variants: function
   return: self
   arguments:
     - THTensor* self
     - THTensor* self
 ]]
 [[
-  name: erfinv
+  name: _th_erfinv
+  cname: erfinv
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -1524,15 +1289,13 @@
     - THTensor* self
 ]]
 [[
-  name: _sqrt
+  name: _th_sqrt
   cname: sqrt
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1540,15 +1303,13 @@
     - THTensor* self
 ]]
 [[
-  name: _rsqrt
+  name: _th_rsqrt
   cname: rsqrt
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1556,15 +1317,13 @@
     - THTensor* self
 ]]
 [[
-  name: _ceil
+  name: _th_ceil
   cname: ceil
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1572,15 +1331,13 @@
     - THTensor* self
 ]]
 [[
-  name: _floor
+  name: _th_floor
   cname: floor
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1588,15 +1345,13 @@
     - THTensor* self
 ]]
 [[
-  name: _round
+  name: _th_round
   cname: round
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1604,15 +1359,13 @@
     - THTensor* self
 ]]
 [[
-  name: _trunc
+  name: _th_trunc
   cname: trunc
   types:
     - floating_point
   backends:
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -1620,27 +1373,26 @@
     - THTensor* self
 ]]
 [[
-  name: frac_
+  name: _th_frac_
   types:
     - floating_point
   backends:
-    - CPU
     - CUDA
   cname: frac
+  variants: function
   return: self
   arguments:
     - THTensor* self
     - THTensor* self
 ]]
 [[
-  name: frac
+  name: _th_frac
+  cname: frac
   types:
     - floating_point
   backends:
-    - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -1655,9 +1407,7 @@
   backends:
     - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   options:
     - cname: varall
       return: accreal
@@ -1690,9 +1440,7 @@
   backends:
     - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   options:
     - cname: stdall
       return: accreal
@@ -1719,57 +1467,14 @@
           default: "false"
 ]]
 [[
-  name: th_norm
-  cname: norm
+  name: _th_renorm
+  cname: renorm
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - function
-  options:
-    - cname: normall
-      return: accreal
-      arguments:
-        - THTensor* self
-        - arg: real p
-          default: AS_REAL(2)
-]]
-[[
-  name: _th_norm
-  types:
-    - floating_point
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
-    - function
-  options:
-    - cname: norm
-      return: argument 0
-      scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - THTensor* self
-        - arg: real p
-          python_default_init: AS_REAL(2)
-        - arg: long dim
-          wrap_dim: self
-        - arg: bool keepdim
-          default: "false"
-]]
-[[
-  name: renorm
-  types:
-    - floating_point
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -1782,13 +1487,14 @@
     - real maxnorm
 ]]
 [[
-  name: renorm_
+  name: _th_renorm_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: renorm
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -1799,14 +1505,13 @@
     - real maxnorm
 ]]
 [[
-  name: dist
+  name: _th_dist
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
     - function
   options:
     - cname: dist
@@ -1819,14 +1524,12 @@
           default: AS_REAL(2)
 ]]
 [[
-  name: reciprocal
+  name: _th_reciprocal
   types:
     - floating_point
   backends:
-    - CPU
     - CUDA
   variants:
-    - method
     - function
   options:
     - cname: cinv
@@ -1837,12 +1540,12 @@
         - THTensor* self
 ]]
 [[
-  name: reciprocal_
+  name: _th_reciprocal_
   types:
     - floating_point
   backends:
-    - CPU
     - CUDA
+  variants: function
   options:
     - cname: cinv
       return: self
@@ -1851,12 +1554,10 @@
         - THTensor* self
 ]]
 [[
-  name: neg
+  name: _th_neg
   backends:
-    - CPU
     - CUDA
   variants:
-    - method
     - function
   options:
     - cname: neg
@@ -1867,10 +1568,10 @@
         - THTensor* self
 ]]
 [[
-  name: neg_
+  name: _th_neg_
   backends:
-    - CPU
     - CUDA
+  variants: function
   options:
     - cname: neg
       return: self
@@ -1879,14 +1580,13 @@
         - THTensor* self
 ]]
 [[
-  name: atan2
+  name: _th_atan2
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
     - function
   cname: atan2
   return: argument 0
@@ -1898,13 +1598,14 @@
     - THTensor* other
 ]]
 [[
-  name: atan2_
+  name: _th_atan2_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: atan2
+  variants: function
   return: argument 0
   arguments:
     - THTensor* self
@@ -1913,7 +1614,7 @@
     - THTensor* other
 ]]
 [[
-  name: th_pow
+  name: _th_pow
   cname: pow
   variants:
     - function
@@ -1927,9 +1628,8 @@
         - real exponent
 ]]
 [[
-  name: pow
+  name: _th_pow
   variants:
-    - method
     - function
   return: argument 0
   options:
@@ -1942,7 +1642,7 @@
         - THTensor* exponent
 ]]
 [[
-  name: pow
+  name: _th_pow
   variants:
     - function
   return: argument 0
@@ -1951,13 +1651,14 @@
       arguments:
         - arg: THTensor* result
           output: True
-        - real base
-        - THTensor* self
+        - real self
+        - THTensor* exponent
 ]]
 [[
-  name: pow_
+  name: _th_pow_
   return: argument 0
   cname: pow
+  variants: function
   options:
     - cname: pow
       arguments:
@@ -1972,90 +1673,14 @@
         - THTensor* exponent
 ]]
 [[
-  name: lerp
-  types:
-    - floating_point
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
-    - function
-  return: argument 0
-  cname: lerp
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - arg: THTensor* self
-      broadcast: end fallback
-    - THTensor* end
-    - real weight
-]]
-[[
-  name: lerp_
-  types:
-    - floating_point
-  backends:
-    - CPU
-    - CUDA
-  return: self
-  cname: lerp
-  arguments:
-    - THTensor* self
-    - arg: THTensor* self
-      broadcast: end fallback inplace
-    - THTensor* end
-    - real weight
-]]
-[[
-  name: _linspace
-  cname: linspace
-  types:
-    - Float
-    - Double
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - function
-  return: argument 0
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - real start
-    - real end
-    - arg: long steps
-      default: 100
-]]
-[[
-  name: _logspace
-  cname: logspace
-  types:
-    - Float
-    - Double
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - function
-  return: argument 0
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - real start
-    - real end
-    - arg: long steps
-      default: 100
-]]
-[[
-  name: histc
+  name: _th_histc
+  cname: histc
   types:
     - Float
     - Double
   backends:
     - CPU
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2070,78 +1695,21 @@
       default: 0
 ]]
 [[
-  name: th_zero_
+  name: _th_zero_
   cname: zero
   return: self
+  cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   variants:
     - function
   arguments:
     - THTensor* self
 ]]
 [[
-  name: _sumall
-  variants:
-    - method
-    - function
-  options:
-    - cname: sumall
-      return: accreal
-      arguments:
-        - THTensor* self
-]]
-[[
-  name: _th_sum
-  variants:
-    - method
-    - function
-  options:
-    - cname: sum
-      return: argument 0
-      scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - THTensor* self
-        - arg: long dim
-          wrap_dim: self
-        - arg: bool keepdim
-          default: "false"
-]]
-[[
-  name: _prodall
-  variants:
-    - method
-    - function
-  options:
-    - cname: prodall
-      return: accreal
-      arguments:
-        - THTensor* self
-]]
-[[
-  name: _th_prod
-  variants:
-    - method
-    - function
-  options:
-    - cname: prod
-      return: argument 0
-      scalar_check: self_->dim() == 0 || (keepdim == false && self_->dim() == 1)
-      arguments:
-        - arg: THTensor* result
-          output: True
-        - THTensor* self
-        - arg: long dim
-          wrap_dim: self
-        - arg: bool keepdim
-          default: "false"
-]]
-[[
-  name: _cumsum
+  name: _th_cumsum
   cname: cumsum
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2151,11 +1719,9 @@
       wrap_dim: self
 ]]
 [[
-  name: _cumprod
+  name: _th_cumprod
   cname: cumprod
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2165,9 +1731,9 @@
       wrap_dim: self
 ]]
 [[
-  name: sign
+  name: _th_sign
+  cname: sign
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2176,27 +1742,27 @@
     - THTensor* self
 ]]
 [[
-  name: sign_
+  name: _th_sign_
   cname: sign
+  variants: function
   return: self
   arguments:
     - THTensor* self
     - THTensor* self
 ]]
 [[
-  name: trace
+  name: _th_trace
+  cname: trace
   variants:
-    - method
     - function
   return: accreal
   arguments:
     - THTensor* self
 ]]
 [[
-  name: fmod
+  name: _th_fmod
   return: argument 0
   variants:
-    - method
     - function
   options:
     - cname: fmod
@@ -2214,8 +1780,9 @@
         - THTensor* other
 ]]
 [[
-  name: fmod_
+  name: _th_fmod_
   return: argument 0
+  variants: function
   options:
     - cname: fmod
       arguments:
@@ -2230,10 +1797,9 @@
         - THTensor* other
 ]]
 [[
-  name: remainder
+  name: _th_remainder
   return: argument 0
   variants:
-    - method
     - function
   options:
     - cname: remainder
@@ -2251,8 +1817,9 @@
         - arg: THTensor* other
 ]]
 [[
-  name: remainder_
+  name: _th_remainder_
   return: argument 0
+  variants: function
   options:
     - cname: remainder
       arguments:
@@ -2267,118 +1834,67 @@
         - THTensor* other
 ]]
 [[
-  name: _th_clamp_
+  name: _th_clamp
   cname: clamp
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
-    - THTensor* self
+    - arg: THTensor* result
+      output: True
     - THTensor* self
     - real min
     - real max
 ]]
 [[
-  name: _th_clamp_min_
+  name: _th_clamp_min
   cname: cmaxValue
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
-    - THTensor* self
+    - arg: THTensor* result
+      output: True
     - THTensor* self
     - real min
 ]]
 [[
-  name: _th_clamp_max_
+  name: _th_clamp_max
   cname: cminValue
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
-    - THTensor* self
+    - arg: THTensor* result
+      output: True
     - THTensor* self
     - real max
 ]]
 [[
-  name: _dot
-  backend_type_pairs: [[CUDA,floating_point], [CPU,all]]
+  name: _th_dot
+  backend_types: {CUDA: [floating_point], CPU: [all]}
   cname: dot
-  variants:
-    - method
-    - function
+  variants: function
   return: accreal
   arguments:
     - arg: THTensor* self
     - arg: THTensor* tensor
 ]]
 [[
-  name: tril
+  name: _th_cross_kernel
+  cname: crossKernel
   variants:
-    - method
     - function
-  return: argument 0
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - THTensor* self
-    - arg: long diagonal
-      default: 0
-]]
-[[
-  name: tril_
-  cname: tril
-  return: self
-  arguments:
-    - THTensor* self
-    - THTensor* self
-    - arg: long diagonal
-      default: 0
-]]
-[[
-  name: triu
-  variants:
-    - method
-    - function
-  return: argument 0
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - THTensor* self
-    - arg: long diagonal
-      default: 0
-]]
-[[
-  name: triu_
-  cname: triu
-  return: self
-  arguments:
-    - THTensor* self
-    - THTensor* self
-    - arg: long diagonal
-      default: 0
-]]
-[[
-  name: cross
-  variants:
-    - method
-    - function
+  backends:
+    - CUDA
   return: argument 0
   arguments:
     - arg: THTensor* result
       output: True
     - THTensor* self
     - THTensor* other
-    - arg: long dim
-      default: -1
+    - arg: int64_t dim
 ]]
 [[
-  name: diag
+  name: _th_diag
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2391,11 +1907,11 @@
     if (self_->dim() == 0) {
       throw std::runtime_error("Input must be 1-d or 2-d");
     }
-    ${THTensor}_diag(${state,}result_->tensor, self_->tensor, diagonal);
+    ${THTensor}_diag(${state,}result_, self_, diagonal);
     result_->maybe_zero_dim(self_->dim() == 0);
 ]]
 [[
-  name: th_addmm
+  name: _th_addmm
   cname: addmm
   variants:
     - function
@@ -2416,7 +1932,7 @@
       - THTensor* mat2
 ]]
 [[
-  name: th_addmm_
+  name: _th_addmm_
   variants: [function]
   return: self
   options:
@@ -2434,11 +1950,9 @@
       - THTensor* mat2
 ]]
 [[
-  name: _addmv
+  name: _th_addmv
   cname: addmv
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2455,8 +1969,9 @@
     - THTensor* vec
 ]]
 [[
-  name: _addmv_
+  name: _th_addmv_
   cname: addmv
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -2471,11 +1986,9 @@
     - THTensor* vec
 ]]
 [[
-  name: _addr
+  name: _th_addr
   cname: addr
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2492,9 +2005,10 @@
     - THTensor* vec2
 ]]
 [[
-  name: _addr_
+  name: _th_addr_
   cname: addr
   return: self
+  variants: function
   arguments:
     - THTensor* self
     - arg: real beta
@@ -2508,11 +2022,9 @@
     - THTensor* vec2
 ]]
 [[
-  name: _ger
+  name: _th_ger
   cname: addr
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   scalar_check: False
   arguments:
@@ -2527,11 +2039,9 @@
     - THTensor* vec2
 ]]
 [[
-  name: _mv
+  name: _th_mv
   cname: addmv
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2545,10 +2055,8 @@
     - THTensor* vec
 ]]
 [[
-  name: _mm
-  variants:
-    - method
-    - function
+  name: _th_mm
+  variants: function
   return: argument 0
   options:
     - cname: addmm
@@ -2564,11 +2072,12 @@
         - THTensor* mat2
 ]]
 [[
-  name: bmm
+  name: _th_bmm
   cname: baddbmm
   variants:
-    - method
     - function
+  backends:
+    - CUDA
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2582,9 +2091,9 @@
     - THTensor* mat2
 ]]
 [[
-  name: addbmm
+  name: _th_addbmm
+  cname: addbmm
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2602,8 +2111,9 @@
     - THTensor* batch2
 ]]
 [[
-  name: addbmm_
+  name: _th_addbmm_
   cname: addbmm
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -2618,10 +2128,12 @@
     - THTensor* batch2
 ]]
 [[
-  name: baddbmm
+  name: _th_baddbmm
+  cname: baddbmm
   variants:
-    - method
     - function
+  backends:
+    - CUDA
   return: argument 0
   arguments:
     - arg: THTensor* result
@@ -2638,25 +2150,9 @@
     - THTensor* batch2
 ]]
 [[
-  name: baddbmm_
-  cname: baddbmm
-  return: argument 0
-  arguments:
-    - THTensor* self
-    - arg: real beta
-      default: AS_REAL(1)
-      kwarg_only: True
-    - THTensor* self
-    - arg: real alpha
-      default: AS_REAL(1)
-      kwarg_only: True
-    - THTensor* batch1
-    - THTensor* batch2
-]]
-[[
-  name: addcmul
+  name: _th_addcmul
+  cname: addcmul
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2671,9 +2167,10 @@
     - THTensor* tensor2
 ]]
 [[
-  name: addcmul_
+  name: _th_addcmul_
   options:
     - cname: addcmul
+      variants: function
       return: argument 0
       arguments:
         - THTensor* self
@@ -2685,6 +2182,7 @@
         - THTensor* tensor1
         - THTensor* tensor2
     - cname: spaddcmul
+      variants: function
       return: argument 0
       arguments:
         - THTensor* self
@@ -2696,9 +2194,9 @@
         - THSTensor* tensor2
 ]]
 [[
-  name: addcdiv
+  name: _th_addcdiv
+  cname: addcdiv
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2713,8 +2211,9 @@
     - THTensor* tensor2
 ]]
 [[
-  name: addcdiv_
+  name: _th_addcdiv_
   cname: addcdiv
+  variants: function
   return: argument 0
   arguments:
     - THTensor* self
@@ -2727,8 +2226,8 @@
     - THTensor* tensor2
 ]]
 [[
-  name: _gesv_single
-  cname: gesv
+  name: _th_gels
+  cname: gels
   types:
     - Float
     - Double
@@ -2736,27 +2235,6 @@
     - CPU
     - CUDA
   variants:
-    - method
-    - function
-  return: argument 0,1
-  arguments:
-    - arg: THTensor* solution
-      output: True
-    - arg: THTensor* lu
-      output: True
-    - THTensor* self
-    - THTensor* A
-]]
-[[
-  name: gels
-  types:
-    - Float
-    - Double
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -2768,39 +2246,7 @@
     - THTensor* A
 ]]
 [[
-  name: trtrs
-  types:
-    - Float
-    - Double
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
-    - function
-  return: argument 0,1
-  arguments:
-    - arg: THTensor* res1
-      output: True
-    - arg: THTensor* res2
-      output: True
-    - THTensor* self
-    - THTensor* A
-    - arg: bool upper
-      if_true: U
-      if_false: L
-      default: U
-    - arg: bool transpose
-      if_true: T
-      if_false: N
-      default: N
-    - arg: bool unitriangular
-      if_true: U
-      if_false: N
-      default: N
-]]
-[[
-  name: symeig
+  name: _th_symeig
   cname: syev
   types:
     - Float
@@ -2809,7 +2255,6 @@
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -2828,7 +2273,7 @@
       default: U
 ]]
 [[
-  name: eig
+  name: _th_eig
   cname: geev
   types:
     - Float
@@ -2837,7 +2282,6 @@
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -2852,8 +2296,8 @@
       default: N
 ]]
 [[
-  name: svd
-  cname: gesvd
+  name: _th_svd
+  cname: gesdd
   types:
     - Float
     - Double
@@ -2861,7 +2305,6 @@
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0,1,2
   arguments:
@@ -2876,9 +2319,13 @@
       if_true: S
       if_false: A
       default: S
+    - arg: bool compute_uv
+      if_true: S
+      if_false: N
+      default: S
 ]]
 [[
-  name: _getri
+  name: _th_getri_single
   cname: getri
   types:
     - Float
@@ -2886,9 +2333,7 @@
   backends:
     - CPU
     - CUDA
-  variants:
-    - method
-    - function
+  variants: function
   return: argument 0
   arguments:
     - arg: THTensor* output
@@ -2896,7 +2341,8 @@
     - THTensor* self
 ]]
 [[
-  name: potrf
+  name: _th_potri
+  cname: potri
   types:
     - Float
     - Double
@@ -2904,50 +2350,6 @@
     - CPU
     - CUDA
   variants:
-    - method
-    - function
-  return: argument 0
-  arguments:
-    - arg: THTensor* output
-      output: True
-    - THTensor* self
-    - arg: bool upper
-      if_true: U
-      if_false: L
-      default: U
-]]
-[[
-  name: potrs
-  types:
-    - Float
-    - Double
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
-    - function
-  return: argument 0
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - THTensor* self
-    - THTensor* input2
-    - arg: bool upper
-      if_true: U
-      if_false: L
-      default: U
-]]
-[[
-  name: potri
-  types:
-    - Float
-    - Double
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -2960,14 +2362,14 @@
       default: U
 ]]
 [[
-  name: pstrf
+  name: _th_pstrf
+  cname: pstrf
   types:
     - Float
     - Double
   backends:
     - CPU
   variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -2983,11 +2385,12 @@
     - arg: real tol
       default: -1
   aten_custom_call: |
-    ${THTensor}_pstrf(res1_->tensor, res2_->tensor, self_->tensor, (upper) ? "U" : "L", tol_);
+    ${THTensor}_pstrf(res1_, res2_, self_, (upper) ? "U" : "L", tol_);
     res2 -= 1;  // LAPACK returns 1-indexed pivots
 ]]
 [[
-  name: qr
+  name: _th_qr
+  cname: qr
   types:
     - Float
     - Double
@@ -2995,7 +2398,6 @@
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -3006,7 +2408,8 @@
     - THTensor* self
 ]]
 [[
-  name: geqrf
+  name: _th_geqrf
+  cname: geqrf
   types:
     - Float
     - Double
@@ -3014,7 +2417,6 @@
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0,1
   arguments:
@@ -3025,14 +2427,14 @@
     - THTensor* self
 ]]
 [[
-  name: orgqr
+  name: _th_orgqr
+  cname: orgqr
   types:
     - Float
     - Double
   backends:
     - CPU
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -3042,14 +2444,14 @@
     - THTensor* input2
 ]]
 [[
-  name: ormqr
+  name: _th_ormqr
+  cname: ormqr
   types:
     - Float
     - Double
   backends:
     - CPU
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -3068,54 +2470,7 @@
       default: N
 ]]
 [[
-  name: btrifact
-  cname: btrifact
-  types:
-    - floating_point
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
-    - function
-  return: argument 0,1
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - arg: THIntegerTensor* pivots
-      output: True
-    - CONSTANT NULL
-    - arg: bool pivot
-      kwarg_only: True
-      default: "true"
-    - THTensor* self
-]]
-[[
-  name: btrifact_with_info
-  cname: btrifact
-  types:
-    - floating_point
-  backends:
-    - CPU
-    - CUDA
-  variants:
-    - method
-    - function
-  return: argument 0,1,2
-  arguments:
-    - arg: THTensor* result
-      output: True
-    - arg: THIntegerTensor* pivots
-      output: True
-    - arg: THIntegerTensor* info
-      output: True
-    - arg: bool pivot
-      kwarg_only: True
-      default: "true"
-    - THTensor* self
-]]
-[[
-  name: btrisolve
+  name: _th_btrisolve
   cname: btrisolve
   types:
     - floating_point
@@ -3123,7 +2478,6 @@
     - CPU
     - CUDA
   variants:
-    - method
     - function
   return: argument 0
   arguments:
@@ -3134,11 +2488,14 @@
     - THIntegerTensor* LU_pivots
 ]]
 [[
-  name: random_
+  name: _th_random_
   backends:
     - CPU
     - CUDA
   return: self
+  variants: function
+  cpu_bool: True
+  cuda_bool: True
   options:
     - cname: random
       arguments:
@@ -3163,14 +2520,53 @@
         - int64_t to
 ]]
 [[
-  name: multinomial
+  name: _th_multinomial_alias_setup
+  cname: multinomialAliasSetup
+  variants:
+    - function
+  types:
+    - floating_point
+  backends:
+    - CPU
+    - CUDA
+  return: argument 1,2
+  arguments:
+    - arg: THTensor* probs
+    - arg: THIndexTensor* J
+      output: True
+    - arg: THTensor* q
+      output: True
+]]
+[[
+  name: _th_multinomial_alias_draw
+  cname: multinomialAliasDraw
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   variants:
-    - method
+    - function
+  return: argument 0
+  arguments:
+    - arg: THIndexTensor* result
+      output: True
+    - arg: THGenerator* generator
+      default: nullptr
+      kwarg_only: True
+    - THTensor* q
+    - THIndexTensor* J
+    - long num_samples
+]]
+[[
+  name: _th_multinomial
+  cname: multinomial
+  types:
+    - floating_point
+  backends:
+    - CPU
+    - CUDA
+  variants:
     - function
   return: argument 0
   arguments:
@@ -3185,13 +2581,14 @@
       default: "false"
 ]]
 [[
-  name: uniform_
+  name: _th_uniform_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: uniform
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -3204,7 +2601,8 @@
       default: 1
 ]]
 [[
-  name: normal
+  name: _th_normal
+  cname: normal
   types:
     - floating_point
   backends:
@@ -3244,13 +2642,14 @@
         - THTensor* std
 ]]
 [[
-  name: normal_
+  name: _th_normal_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: normal
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -3263,13 +2662,14 @@
       default: 1
 ]]
 [[
-  name: cauchy_
+  name: _th_cauchy_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: cauchy
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -3282,9 +2682,9 @@
       default: 1
 ]]
 [[
-  name: logNormal_
+  name: _th_log_normal_
   cname: logNormal
-  python_name: log_normal_
+  variants: function
   types:
     - floating_point
   backends:
@@ -3302,13 +2702,14 @@
       default: 2
 ]]
 [[
-  name: exponential_
+  name: _th_exponential_
   types:
     - floating_point
   backends:
     - CPU
     - CUDA
   cname: exponential
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -3319,11 +2720,12 @@
       default: 1
 ]]
 [[
-  name: geometric_
+  name: _th_geometric_
   backends:
     - CPU
     - CUDA
   cname: geometric
+  variants: function
   return: self
   arguments:
     - THTensor* self
@@ -3333,40 +2735,7 @@
     - double p
 ]]
 [[
-  name: _bernoulli_
-  backends:
-    - CPU
-    - CUDA
-  cname: bernoulli
-  return: self
-  arguments:
-    - THTensor* self
-    - arg: THGenerator* generator
-      default: nullptr
-      kwarg_only: True
-    - double p
-]]
-[[
-  name: _th_bernoulli
-  types:
-    - Float
-    - Double
-  return: argument 0
-  variants:
-    - method
-    - function
-  cname: bernoulli_Tensor
-  arguments:
-    - arg: THTensor* output
-      output: True
-      resize: self
-    - arg: THGenerator* generator
-      default: nullptr
-      kwarg_only: True
-    - THTensor* self
-]]
-[[
-  name: _dirichlet_grad
+  name: _th_dirichlet_grad
   types:
     - floating_point
   backends:
@@ -3383,55 +2752,28 @@
         - THTensor* alpha
         - THTensor* total
 ]]
-[[
-  name: th_tensor
-  return: THTensor*
-  cpu_half: True
-  variants: [function]
-  options:
-    - cname: new
-      arguments: []
-    - cname: newWithSize
-      arguments:
-        - THSize* size
-        - CONSTANT NULL
-]]
-[[
-  name: tensor
-  return: THTensor*
-  cpu_half: True
-  variants: [function]
-  options:
-    - cname: newWithSize
-      arguments:
-        - THSize* size
-        - arg: THStride* stride
-    - cname: newWithStorage
-      arguments:
-        - THStorage* storage
-        - int64_t storageOffset
-        - THSize* size
-        - arg: THStride* stride
-          default: NULL
-]]
 
 # In theory, this could be a part of the above declaration. But in
 # practice this leads to all sorts of problems with ambiguous overloads.
 # So we add it here with a separate name.
 [[
-  name: alias
+  name: _th_alias
   return: THTensor*
   cpu_half: True
-  variants: [function]
+  cpu_bool: True
+  cuda_bool: True
+  variants:
+    - function
   options:
     - cname: newWithTensor
       arguments:
         - THTensor* self
 ]]
 [[
-  name: _copy_ignoring_overlaps_
+  name: _th_copy_ignoring_overlaps_
   cname: copyIgnoringOverlaps
   return: self
+  variants: function
   backends:
     - CUDA
   arguments:
@@ -3440,9 +2782,12 @@
 ]]
 
 [[
-  name: _cat
+  name: _th_cat
   cname: catArray
   variants: [function]
+  cpu_half: True
+  cpu_bool: True
+  cuda_bool: True
   return: self
   arguments:
     - arg: THTensor* self

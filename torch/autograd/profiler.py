@@ -1,35 +1,82 @@
-import subprocess
-import re
-import os
-import sys
 import itertools
-from collections import defaultdict
-
 import torch
-from torch._six import FileNotFoundError
 
-
-class range(object):
-    def __init__(self, name):
-        self.name = name
-
-    def __enter__(self):
-        torch.autograd._push_range(self.name)
-
-    def __exit__(self, *args):
-        torch.autograd._pop_range()
-        return False
+from collections import defaultdict, namedtuple
+from operator import attrgetter
 
 
 class EventList(list):
     """A list of Events (for pretty printing)"""
     def __init__(self, *args, **kwargs):
         super(EventList, self).__init__(*args, **kwargs)
+        self._cpu_children_populated = False
 
     def __str__(self):
         return self.table()
 
-    def table(self, sort_by=None):
+    def populate_cpu_children(self):
+        """Populates child events into each underlying FunctionEvent object.
+        One event is a child of another if [s1, e1) is inside [s2, e2). Where
+        s1 and e1 would be start and end of the child event's interval. And
+        s2 and e2 start and end of the parent event's interval
+
+        Example: In event list [[0, 10], [1, 3], [3, 4]] would have make [0, 10]
+        be a parent of two other intervals.
+
+        If for any reason two intervals intersect only partialy, this function
+        will not record a parent child relationship between then.
+        """
+        if self.cpu_children_populated:
+            return
+        events = sorted(
+            self,
+            key=attrgetter("thread"),
+        )
+        threads = itertools.groupby(events, key=attrgetter("thread"))
+
+        # For each thread we keep a stack of current nested parents.
+        # We maintain the invariant that each interval is a subset of all other
+        # intervals lower in the stack.
+        #
+        # First we sort the intervals by their start time. Then we iterate over them.
+        # Every time we see a new interval we remove several parents from
+        # the top until we restore the invariant. Then parent child relationship
+        # if recorded if the stack is not empty.
+        # Finally we add new interval to the list
+        #
+        # Algorithm has O(N * log(N)) complexity where N is number of
+        # intervals
+        for thread_id, thread_events in threads:
+            thread_events = sorted(
+                thread_events,
+                key=lambda event: [event.cpu_interval.start, -event.cpu_interval.end],
+            )
+            current_events = []
+            cur_end = 0
+            for event in thread_events:
+                while len(current_events) > 0:
+                    parent = current_events[-1]
+                    if event.cpu_interval.start >= parent.cpu_interval.end or \
+                            event.cpu_interval.end > parent.cpu_interval.end:
+                        # this can't be a parent
+                        current_events.pop()
+                    else:
+                        parent.append_cpu_child(event)
+                        break
+
+                current_events.append(event)
+
+        self._cpu_children_populated = True
+
+    @property
+    def self_cpu_time_total(self):
+        return sum([event.self_cpu_time_total for event in self])
+
+    @property
+    def cpu_children_populated(self):
+        return self._cpu_children_populated
+
+    def table(self, sort_by=None, row_limit=100):
         """Prints an EventList as a nicely formatted table.
 
         Arguments:
@@ -41,7 +88,7 @@ class EventList(list):
         Returns:
             A string containing the table.
         """
-        return build_table(self, sort_by)
+        return build_table(self, sort_by=sort_by, row_limit=row_limit)
 
     def export_chrome_trace(self, path):
         """Exports an EventList as a Chrome tracing tools file.
@@ -107,6 +154,7 @@ class EventList(list):
         Returns:
             An EventList containing FunctionEventAvg objects.
         """
+        self.populate_cpu_children()
         stats = defaultdict(FunctionEventAvg)
         for evt in self:
             stats[evt.key] += evt
@@ -200,10 +248,11 @@ class profile(object):
     def _check_finish(self):
         if self.function_events is None:
             raise RuntimeError("can't export a trace that didn't finish running")
+        self.function_events.populate_cpu_children()
 
-    def table(self, sort_by=None):
+    def table(self, sort_by=None, row_limit=100):
         self._check_finish()
-        return self.function_events.table(sort_by)
+        return self.function_events.table(sort_by=sort_by, row_limit=row_limit)
     table.__doc__ = EventList.table.__doc__
 
     def export_chrome_trace(self, path):
@@ -220,6 +269,14 @@ class profile(object):
         self._check_finish()
         return self.function_events.total_average()
     total_average.__doc__ = EventList.total_average.__doc__
+
+    @property
+    def self_cpu_time_total(self):
+        """ Returns total time spent on CPU obtained as a sum of
+        all self times across all the events.
+        """
+        self._check_finish()
+        return self.function_events.self_cpu_time_total
 
 
 class emit_nvtx(object):
@@ -249,6 +306,51 @@ class emit_nvtx(object):
         ...     model(x) # Warmup CUDA memory allocator and profiler
         ...     with torch.autograd.profiler.emit_nvtx():
         ...         model(x)
+
+    **Forward-backward correlation**
+
+    When viewing a profile created using :class:`emit_nvtx` in the Nvidia Visual Profiler,
+    correlating each backward-pass op with the corresponding forward-pass op can be difficult.
+    To ease this task, :class:`emit_nvtx` appends sequence number information to the ranges it
+    generates.
+
+    During the forward pass, each function range is decorated with ``seq=<N>``.  ``seq`` is a running
+    counter, incremented each time a new backward Function object is created and stashed for backward.
+    Thus, the `seq=<N>` annotation associated with each forward function range tells you that
+    if a backward Function object is created by this forward function,
+    the backward object will receive sequence number N.
+    During the backward pass, the top-level range wrapping each C++ backward Function's
+    ``apply()`` call is decorated with ``stashed seq=<M>``.  ``M`` is the sequence number that
+    the backward object was created with.  By comparing ``stashed seq`` numbers in backward with ``seq``
+    numbers in forward, you can track down which forward op created each backward Function.
+
+    Any functions executed during the backward pass are also decorated with ``seq=<N>``.  During
+    default backward (with ``create_graph=False``) this information is irrelevant, and in fact,
+    ``N`` may simply be 0 for all such functions.  Only the top-level ranges associated with
+    backward Function objects' ``apply()`` methods are useful, as a way to correlate these Function
+    objects with the earlier forward pass.
+
+    **Double-backward**
+
+    If, on the other hand, a backward pass with ``create_graph=True`` is underway (in other words,
+    if you are setting up for a double-backward), each function's execution during backward
+    is given a nonzero, useful ``seq=<N>``.  Those functions may themselves create Function objects
+    to be executed later during double-backward, just as the original functions in the forward pass did.
+    The relationship between backward and double-backward is conceptually the same as the relationship
+    between forward and backward: The functions still emit current-sequence-number-tagged ranges,
+    the Function objects they create still stash those sequence numbers, and during the eventual
+    double-backward, the Function objects' ``apply()`` ranges are still tagged with ``stashed seq``
+    numbers, which can be compared to `seq` numbers from the backward pass.
+
+    .. warning:
+        The sequence number is thread-local, and some forward functions don't create an associated
+        backward Function object (instead delegating that to sub-functions further down the call chain).
+        For these reasons, the correspondence of stashed sequence numbers in
+        backward Function ``apply()`` ranges with `seq` numbers in forward-pass ranges is
+        not guaranteed to be 1 to 1.  The sequence numbers alone may not be enough to fully
+        disambiguate which forward function created which
+        backward Function object.  You may need to make a judgment based on analytic knowledge of what
+        the expected correspondence should be.
     """
     def __init__(self, enabled=True):
         self.enabled = enabled
@@ -286,7 +388,21 @@ def load_nvprof(path):
 
 def format_time(time_us):
     """Defines how to format time in FunctionEvent"""
+    US_IN_SECOND = 1000.0 * 1000.0
+    US_IN_MS = 1000.0
+    if time_us >= US_IN_SECOND:
+        return '{:.3f}s'.format(time_us / US_IN_SECOND)
+    if time_us >= US_IN_MS:
+        return '{:.3f}ms'.format(time_us / US_IN_MS)
     return '{:.3f}us'.format(time_us)
+
+
+def format_time_share(time_us, total_time_us):
+    """Defines how to format time in FunctionEvent"""
+    if total_time_us == 0:
+        assert(time_us == 0)
+        return "NaN"
+    return '{:.2f}%'.format(time_us * 100.0 / total_time_us)
 
 
 def attr_formatter(name):
@@ -302,6 +418,7 @@ class FormattedTimesMixin(object):
     cuda_time_str = attr_formatter('cuda_time')
     cpu_time_total_str = attr_formatter('cpu_time_total')
     cuda_time_total_str = attr_formatter('cuda_time_total')
+    self_cpu_time_total_str = attr_formatter('self_cpu_time_total')
 
     @property
     def cpu_time(self):
@@ -321,11 +438,7 @@ class Interval(object):
         return self.end - self.start
 
 
-class Kernel(object):
-    def __init__(self, name, device, interval):
-        self.name = name
-        self.device = device
-        self.interval = interval
+Kernel = namedtuple('Kernel', ['name', 'device', 'interval'])
 
 
 # TODO: record TID too
@@ -338,9 +451,25 @@ class FunctionEvent(FormattedTimesMixin):
         self.thread = thread
         self.kernels = []
         self.count = 1
+        self.cpu_children = []
 
     def append_kernel(self, name, device, start, end):
         self.kernels.append(Kernel(name, device, Interval(start, end)))
+
+    def append_cpu_child(self, child):
+        """Append a CPU child of type FunctionEvent.
+
+        One is supposed to append only dirrect children to the event to have
+        correct self cpu time being reported.
+        """
+        assert(isinstance(child, FunctionEvent))
+        self.cpu_children.append(child)
+
+    @property
+    def self_cpu_time_total(self):
+        return self.cpu_time_total - sum(
+            [child.cpu_time_total for child in self.cpu_children]
+        )
 
     @property
     def cuda_time_total(self):
@@ -355,15 +484,29 @@ class FunctionEvent(FormattedTimesMixin):
         return self.name
 
     def __repr__(self):
-        return '<FunctionEvent id={} cpu_time={} cuda_time={} name={} thread={}>'.format(
-            self.id, self.cpu_time_str, self.cuda_time_str, self.name, self.thread)
+        return (
+            '<FunctionEvent id={} cpu_time={} cpu_start={} cpu_end={} '
+            'cpu_children={} cuda_time={} name={} thread={}>'.format(
+                self.id,
+                self.cpu_time_str,
+                self.cpu_interval.start,
+                self.cpu_interval.end,
+                str([child.id for child in self.cpu_children]),
+                self.cuda_time_str,
+                self.name,
+                self.thread
+            )
+        )
 
 
 class FunctionEventAvg(FormattedTimesMixin):
     """Used to average stats over multiple FunctionEvent objects."""
     def __init__(self):
         self.key = None
-        self.count = self.cpu_time_total = self.cuda_time_total = 0
+        self.count = 0
+        self.cpu_time_total = 0
+        self.cuda_time_total = 0
+        self.self_cpu_time_total = 0
 
     def __iadd__(self, other):
         if self.key is None:
@@ -372,6 +515,7 @@ class FunctionEventAvg(FormattedTimesMixin):
         assert other.key == self.key
         self.cpu_time_total += other.cpu_time
         self.cuda_time_total += other.cuda_time
+        self.self_cpu_time_total += other.self_cpu_time_total
         self.count += 1
         return self
 
@@ -383,22 +527,9 @@ class FunctionEventAvg(FormattedTimesMixin):
 ################################################################################
 # Utilities
 
-def demangle(name):
-    """Demangle a C++ identifier using c++filt"""
-    try:
-        with open(os.devnull, 'w') as devnull:
-            is_win = sys.platform == 'win32'
-            filt_cmd = ['undname', name] if is_win else ['c++filt', '-n', name]
-            orig_name = subprocess.check_output(filt_cmd, stderr=devnull).rstrip().decode("ascii")
-            orig_name = re.search('is :- \"(.*)"', orig_name).group(1) if is_win else orig_name
-            return orig_name
-    except (subprocess.CalledProcessError, AttributeError, FileNotFoundError, OSError):
-        return name
-
-
 class StringTable(defaultdict):
     def __missing__(self, key):
-        self[key] = demangle(key)
+        self[key] = torch._C._demangle(key)
         return self[key]
 
 
@@ -481,7 +612,7 @@ def parse_nvprof_trace(path):
     # Parse strings table
     strings = {}
     for r in conn.execute("SELECT _id_ as id, value FROM StringTable"):
-        strings[r["id"]] = demangle(r["value"])
+        strings[r["id"]] = torch._C._demangle(r["value"])
 
     # First, find all functions and create FunctionEvents for them
     marker_query = """
@@ -538,10 +669,12 @@ def parse_nvprof_trace(path):
 ################################################################################
 # Pretty printer
 
-def build_table(events, sort_by=None, header=None):
+def build_table(events, sort_by=None, header=None, row_limit=100):
     """Prints a summary of events (which can be a list of FunctionEvent or FunctionEventAvg)."""
     if sort_by is not None:
-        events = sorted(events, key=lambda evt: getattr(evt, sort_by))
+        events = EventList(sorted(
+            events, key=lambda evt: getattr(evt, sort_by), reverse=True
+        ))
 
     name_lengths = [len(evt.key) for evt in events]
     if len(name_lengths) == 0:
@@ -550,26 +683,54 @@ def build_table(events, sort_by=None, header=None):
     max_name_length += 4  # Add some nice padding
     col_width = 15
     col_format = '  {: >' + str(col_width) + '}'
-    row_format = '{: <' + str(max_name_length) + '}' + col_format * 5
-    header_sep = '-' * max_name_length + ('  ' + '-' * col_width) * 5
+    row_format = '{: <' + str(max_name_length) + '}' + col_format * 9
+    header_sep = '-' * max_name_length + ('  ' + '-' * col_width) * 9
 
     # Have to use a list because nonlocal is Py3 only...
-    result = ['']
+    result = []
 
     def append(s):
-        result[0] += s
-        result[0] += '\n'
+        result.append(s)
+        result.append('\n')  # Yes, newline after the end as well
 
+    self_cpu_time_total = sum([event.self_cpu_time_total for event in events])
+    cuda_time_total = sum([evt.cuda_time_total for evt in events])
     # Actual printing
     if header is not None:
         line_length = max_name_length + (col_width + 2) * 5
         append('=' * line_length)
         append(header)
     append(header_sep)
-    append(row_format.format('Name', 'CPU time', 'CUDA time', 'Calls', 'CPU total', 'CUDA total'))
+    append(row_format.format(
+        'Name',
+        'Self CPU total %',
+        'Self CPU total',
+        'CPU total %',
+        'CPU total',
+        'CPU time avg',
+        'CUDA total %',
+        'CUDA total',
+        'CUDA time avg',
+        'Number of Calls',
+    ))
     append(header_sep)
-    for evt in events:
-        append(row_format.format(evt.key, evt.cpu_time_str, evt.cuda_time_str,
-                                 evt.count, evt.cpu_time_total_str, evt.cuda_time_total_str))
-
-    return result[0]
+    for evt in events[:row_limit]:
+        append(row_format.format(
+            evt.key,  # Name
+            # Self CPU total %
+            format_time_share(evt.self_cpu_time_total, self_cpu_time_total),
+            evt.self_cpu_time_total_str,  # Self CPU total
+            # CPU total %
+            format_time_share(evt.cpu_time_total, self_cpu_time_total),
+            evt.cpu_time_total_str,  # CPU total
+            evt.cpu_time_str,  # CPU time avg
+            # CUDA time total %
+            format_time_share(evt.cuda_time_total, cuda_time_total),
+            evt.cuda_time_total_str,
+            evt.cuda_time_str,  # Cuda time avg
+            evt.count,  # Number of calls
+        ))
+    append(header_sep)
+    append("Self CPU time total: {}".format(format_time(self_cpu_time_total)))
+    append("CUDA time total: {}".format(format_time(cuda_time_total)))
+    return ''.join(result)

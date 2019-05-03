@@ -1,4 +1,4 @@
-#include "THAllocator.h"
+#include <TH/THAllocator.h>
 
 /* stuff for mapped files */
 #ifdef _WIN32
@@ -10,6 +10,8 @@
 #define TH_ATOMIC_IPC_REFCOUNT 1
 #endif
 
+#include <c10/core/CPUAllocator.h>
+
 #if HAVE_MMAP
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -19,19 +21,8 @@
 #endif
 /* end of stuff for mapped files */
 
-struct THDefaultAllocator final : public at::Allocator {
-  at::DataPtr allocate(size_t size) const override {
-    auto* ptr = THAlloc(size);
-    return {ptr, ptr, &THFree, at::kCPU};
-  }
-  at::DeleterFnPtr raw_deleter() const override {
-    return &THFree;
-  }
-};
-
-static THDefaultAllocator th_default_allocator;
 at::Allocator* getTHDefaultAllocator() {
-  return &th_default_allocator;
+  return c10::GetCPUAllocator();
 }
 
 #if defined(_WIN32) || defined(HAVE_MMAP)
@@ -394,11 +385,11 @@ THMapAllocator::THMapAllocator(const char *filename, int flags, size_t size) {
   AT_ERROR("file mapping not supported on your system");
 }
 
-THMapAllocator::THMapAllocator(WithFd, const char *filename, int fd, int flags) {
+THMapAllocator::THMapAllocator(WithFd, const char *filename, int fd, int flags, size_t size) {
   AT_ERROR("file mapping not supported on your system");
 }
 
-THMapAllocator::~THMapAllocator(THMapAllocator* ctx) {}
+void THMapAllocator::close() { }
 
 #endif
 
@@ -537,25 +528,25 @@ THRefcountedMapAllocator* THRefcountedMapAllocator::fromDataPtr(const at::DataPt
 at::DataPtr THMapAllocator::makeDataPtr(const char *filename, int flags, size_t size, size_t* actual_size_out) {
   auto* context = new THMapAllocator(filename, flags, size);
   if (actual_size_out) *actual_size_out = context->size();
-  return {context->data(), context, &deleteTHMapAllocator, at::kCPU};
+  return {context->data(), context, &deleteTHMapAllocator, at::DeviceType::CPU};
 }
 
 at::DataPtr THMapAllocator::makeDataPtr(WithFd, const char *filename, int fd, int flags, size_t size, size_t* actual_size_out) {
   auto* context = new THMapAllocator(WITH_FD, filename, fd, flags, size);
   if (actual_size_out) *actual_size_out = context->size();
-  return {context->data(), context, &deleteTHMapAllocator, at::kCPU};
+  return {context->data(), context, &deleteTHMapAllocator, at::DeviceType::CPU};
 }
 
 at::DataPtr THRefcountedMapAllocator::makeDataPtr(const char *filename, int flags, size_t size, size_t* actual_size_out) {
   auto* context = new THRefcountedMapAllocator(filename, flags, size);
   if (actual_size_out) *actual_size_out = context->size() - TH_ALLOC_ALIGNMENT;
-  return {context->data(), context, &deleteTHRefcountedMapAllocator, at::kCPU};
+  return {context->data(), context, &deleteTHRefcountedMapAllocator, at::DeviceType::CPU};
 }
 
 at::DataPtr THRefcountedMapAllocator::makeDataPtr(WithFd, const char *filename, int fd, int flags, size_t size, size_t* actual_size_out) {
   auto* context = new THRefcountedMapAllocator(WITH_FD, filename, fd, flags, size);
   if (actual_size_out) *actual_size_out = context->size() - TH_ALLOC_ALIGNMENT;
-  return {context->data(), context, &deleteTHRefcountedMapAllocator, at::kCPU};
+  return {context->data(), context, &deleteTHRefcountedMapAllocator, at::DeviceType::CPU};
 }
 
 void* THRefcountedMapAllocator::data() const {
