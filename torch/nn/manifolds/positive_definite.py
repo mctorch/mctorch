@@ -39,7 +39,7 @@ class PositiveDefinite(Manifold):
 
     def rand(self):
         """
-        Generate random positive definite point 
+        Generate random positive definite point
         """
         if self._k == 1:
             d = torch.ones(self._n, 1) + torch.rand(self._n, 1)
@@ -51,7 +51,7 @@ class PositiveDefinite(Manifold):
             for i in range(self._k):
                 X[i], _ = torch.qr(torch.randn(self._n, self._n))
 
-        return multiprod(X, d * multitransp(X))     
+        return multiprod(X, d * multitransp(X))
 
     def proj(self, X, U):
         return multisym(U)
@@ -60,15 +60,15 @@ class PositiveDefinite(Manifold):
         return multiprod(multiprod(X, multisym(U)), X)
 
     def inner(self, X, G1, G2):
-        G1s, _ = torch.gesv(G1, X)
-        G2s, _ = torch.gesv(G2, X)
+        G1s, _ = torch.solve(G1, X)
+        G2s, _ = torch.solve(G2, X)
         return torch.sum(G1s * G2s)
 
     def retr(self, X, G):
         """
         Retract to positive definite
         """
-        X_inv_G, _ = torch.gesv(G, X)
+        X_inv_G, _ = torch.solve(G, X)
         return multisym(X + G + .5 * multiprod(G, X_inv_G))
 
     def ehess2rhess(self, X, egrad, ehess, H):
@@ -81,7 +81,7 @@ class PositiveDefinite(Manifold):
         return Hess
 
     def norm(self, X, G):
-        return torch.norm(torch.gesv(G, X)[0])
+        return torch.norm(torch.solve(G, X)[0])
 
     def randvec(self, X):
         U = torch.randn(*X.size())
