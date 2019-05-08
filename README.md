@@ -145,7 +145,7 @@ McTorch is released under the open source [3-clause BSD License](LICENSE).
 - [Anoop Kunchukuttan](https://github.com/anoopkunchukuttan)
 
 ## Reference
-Please cite [1](https://arxiv.org/abs/1810.01811) if you found this code useful.
+Please cite [[1](https://arxiv.org/abs/1810.01811)] if you found this code useful.
 #### McTorch, a manifold optimization library for deep learning
 [1] M. Meghawanshi, P. Jawanpuria, A. Kunchukuttan, H. Kasai, and B. Mishra, [McTorch, a manifold optimization library for deep learning](https://arxiv.org/abs/1810.01811)
 
