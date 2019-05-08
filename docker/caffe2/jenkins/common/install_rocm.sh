@@ -5,6 +5,11 @@ set -ex
 install_ubuntu() {
     apt-get update
     apt-get install -y wget
+    apt-get install -y libopenblas-dev
+
+    # Need the libc++1 and libc++abi1 libraries to allow torch._C to load at runtime
+    apt-get install libc++1
+    apt-get install libc++abi1
 
     DEB_ROCM_REPO=http://repo.radeon.com/rocm/apt/debian
     # Add rocm repository
@@ -20,51 +25,61 @@ install_ubuntu() {
                    miopen-hip \
                    miopengemm \
                    rocblas \
-                   hipblas \
-                   rocrand \
-                   hcsparse \
                    rocm-profiler \
-                   cxlactivitylogger
+                   cxlactivitylogger \
+                   rocsparse \
+                   hipsparse \
+                   rocrand \
+                   hip-thrust \
+                   rccl
 
-    pushd $HOME
-    # install hcrng
-    curl https://s3.amazonaws.com/ossci-linux/hcrng-master-a8c6a0b-Linux.deb -o hcrng.deb
-    dpkg -i hcrng.deb
-    rm hcrng.deb
-
-    # hotfix a bug in hip's cmake files, this has been fixed in
-    # https://github.com/ROCm-Developer-Tools/HIP/pull/516 but for
-    # some reason it has not included in the latest rocm release
-    if [[ -f /opt/rocm/hip/cmake/FindHIP.cmake ]]; then
-        sudo sed -i 's/\ -I${dir}/\ $<$<BOOL:${dir}>:-I${dir}>/' /opt/rocm/hip/cmake/FindHIP.cmake
-    fi
-    
     # HIP has a bug that drops DEBUG symbols in generated MakeFiles.
     # https://github.com/ROCm-Developer-Tools/HIP/pull/588
     if [[ -f /opt/rocm/hip/cmake/FindHIP.cmake ]]; then
         sudo sed -i 's/set(_hip_build_configuration "${CMAKE_BUILD_TYPE}")/string(TOUPPER _hip_build_configuration "${CMAKE_BUILD_TYPE}")/' /opt/rocm/hip/cmake/FindHIP.cmake
     fi
+
+    # there is a case-sensitivity issue in the cmake files of some ROCm libraries. Fix this here until the fix is released
+    sed -i 's/find_dependency(hip)/find_dependency(HIP)/g' /opt/rocm/rocsparse/lib/cmake/rocsparse/rocsparse-config.cmake
+    sed -i 's/find_dependency(hip)/find_dependency(HIP)/g' /opt/rocm/rocfft/lib/cmake/rocfft/rocfft-config.cmake
+    sed -i 's/find_dependency(hip)/find_dependency(HIP)/g' /opt/rocm/miopen/lib/cmake/miopen/miopen-config.cmake
+    sed -i 's/find_dependency(hip)/find_dependency(HIP)/g' /opt/rocm/rocblas/lib/cmake/rocblas/rocblas-config.cmake
 }
 
 install_centos() {
-    echo "Not implemented yet"
-    exit 1
+
+  yum update -y
+  yum install -y wget
+  yum install -y openblas-devel
+
+  yum install -y epel-release
+  yum install -y dkms kernel-headers-`uname -r` kernel-devel-`uname -r`
+
+  echo "[ROCm]" > /etc/yum.repos.d/rocm.repo
+  echo "name=ROCm" >> /etc/yum.repos.d/rocm.repo
+  echo "baseurl=http://repo.radeon.com/rocm/yum/rpm/" >> /etc/yum.repos.d/rocm.repo
+  echo "enabled=1" >> /etc/yum.repos.d/rocm.repo
+  echo "gpgcheck=0" >> /etc/yum.repos.d/rocm.repo
+
+  yum update -y
+
+  yum install -y \
+                   rocm-dev \
+                   rocm-libs \
+                   rocm-utils \
+                   rocfft \
+                   miopen-hip \
+                   miopengemm \
+                   rocblas \
+                   rocm-profiler \
+                   cxlactivitylogger \
+                   rocsparse \
+                   hipsparse \
+                   rocrand \
+                   rccl \
+                   Thrust
 }
  
-install_hip_thrust() {
-    # Needed for now, will be replaced soon
-    git clone --recursive https://github.com/ROCmSoftwarePlatform/Thrust.git /data/Thrust
-    rm -rf /data/Thrust/thrust/system/cuda/detail/cub-hip
-    git clone --recursive https://github.com/ROCmSoftwarePlatform/cub-hip.git /data/Thrust/thrust/system/cuda/detail/cub-hip
-}
-
-# This will be removed after merging an upcoming PR.
-install_hcrng() {
-    mkdir -p /opt/rocm/debians
-    curl https://s3.amazonaws.com/ossci-linux/hcrng-master-a8c6a0b-Linux.deb -o /opt/rocm/debians/hcrng.deb 
-    dpkg -i /opt/rocm/debians/hcrng.deb
-}
-
 # Install Python packages depending on the base OS
 if [ -f /etc/lsb-release ]; then
   install_ubuntu
@@ -74,6 +89,3 @@ else
   echo "Unable to determine OS..."
   exit 1
 fi
-
-install_hip_thrust
-install_hcrng

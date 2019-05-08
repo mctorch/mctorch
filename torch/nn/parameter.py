@@ -1,6 +1,6 @@
 import torch
 import weakref
-
+from collections import OrderedDict
 
 class Parameter(torch.Tensor):
     r"""A kind of Tensor that is to be considered a module parameter.
@@ -42,11 +42,16 @@ class Parameter(torch.Tensor):
             assert manifold.size() == self.size()
             self.register_rgrad_hook()
 
+    def __deepcopy__(self, memo):
+        if id(self) in memo:
+            return memo[id(self)]
+        else:
+            result = type(self)(self.data.clone(), self.requires_grad, self.manifold)
+            memo[id(self)] = result
+            return result
+
     def __repr__(self):
         return 'Parameter containing:\n' + super(Parameter, self).__repr__()
-
-    def __reduce_ex__(self, proto):
-        return Parameter, (super(Parameter, self), self.requires_grad)
 
     def register_rgrad_hook(self):
         weak_self = weakref.ref(self)
@@ -67,3 +72,10 @@ class Parameter(torch.Tensor):
     def rgrad(self):
         if self._manifold is not None:
             return self._rgrad
+
+    def __reduce_ex__(self, proto):
+        # See Note [Don't serialize hooks]
+        return (
+            torch._utils._rebuild_parameter,
+            (self.data, self.requires_grad, self.manifold, OrderedDict())
+        )

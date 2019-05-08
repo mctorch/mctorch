@@ -1,0 +1,15 @@
+
+  # Scheduled to run 4 hours after the binary jobs start
+  update_s3_htmls:
+    triggers:
+      - schedule:
+          cron: "0 9 * * *"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - update_s3_htmls_for_nightlies:
+          context: org-member
+      - update_s3_htmls_for_nightlies_devtoolset7:
+          context: org-member

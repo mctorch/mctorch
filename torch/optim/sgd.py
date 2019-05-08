@@ -99,8 +99,7 @@ class SGD(Optimizer):
                     if momentum != 0:
                         param_state = self.state[p]
                         if 'momentum_buffer' not in param_state:
-                            buf = param_state['momentum_buffer'] = torch.zeros_like(p.data)
-                            buf.mul_(momentum).add_(d_p)
+                            buf = param_state['momentum_buffer'] = torch.clone(d_p).detach()
                         else:
                             buf = param_state['momentum_buffer']
                             buf.mul_(momentum).add_(1 - dampening, d_p)
@@ -113,5 +112,4 @@ class SGD(Optimizer):
                 else:
                     p.data.add_(p.manifold.retr(p.data,
                                 -group['lr'] * p.rgrad.data) - p.data)
-
         return loss
