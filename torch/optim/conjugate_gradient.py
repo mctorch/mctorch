@@ -107,7 +107,7 @@ class ConjugateGradient(Optimizer):
                                              .format(beta_type))
                         desc_dir = -1 * grad + beta * desc_dir
 
-                        df0 = torch.sum(grad, desc_dir)
+                        df0 = torch.sum(grad * desc_dir)
                         if df0 >= 0:
                             desc_dir = -1 * grad
                     p.data.add_(group['lr'], desc_dir)

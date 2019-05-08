@@ -157,5 +157,3 @@ Please cite [[1](https://arxiv.org/abs/1810.01811)] if you found this code usefu
   year={2018}
 }
 ```
-
-
