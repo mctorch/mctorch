@@ -1,6 +1,6 @@
-# McTorch, a manifold optimization library for deep learning
+# McTorch, a manifold optimization library for deep learning 
 
-McTorch is a Python library that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).
+McTorch is a Python library that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).  
 
 McTorch:
  - Leverages tensor computation and GPU acceleration from PyTorch.
@@ -22,7 +22,7 @@ McTorch builds on top of PyTorch and supports all PyTorch functions in addition 
 
 ### Using McTorch for Optimization
 
-1. **Initialize Parameter** - McTorch manifold parameters are same as PyTorch parameters (`torch.nn.Parameter`) and requires just addition of one property to parameter initialization to constrain the parameter values.
+1. **Initialize Parameter** - McTorch manifold parameters are same as PyTorch parameters (`torch.nn.Parameter`) and requires just addition of one property to parameter initialization to constrain the parameter values. 
 2. **Define Cost** - Cost function can be any PyTorch function using the above parameter mixed with non constrained parameters.
 3. **Optimize** - Any optimizer from `torch.optim` can be used to optimize the cost function using same functionality as any PyTorch code.
 
@@ -105,7 +105,7 @@ All manifolds support k multiplier as well.
 ## Installation
 This is same as PyTorch installation from source. I have tried the installation with Python 3.5.6 and it will be preferred version for installation.
 
-If you are installing from source, we highly recommend installing an Anaconda environment.
+If you are installing from source, we highly recommend installing an Anaconda environment. 
 - Download  anaconda installer from here - [Anaconda](https://www.anaconda.com/download/) and follow GUI steps to install
 - Create an environment, from anaconda console prompt: ```conda create -n myenv python=3.5.6```
 - Activate the environment: ```source activate myenv```
@@ -127,8 +127,8 @@ MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ python setup.py install
 ```
 
 ### Installation FAQs
-1. ```ModuleNotFoundError: No module named 'torch._C'```:
-After installation when using McTorch make sure you have activate the conda environment and not in the same folder as McTorch as ```import torch``` tries to refer to the module in torch folder and throws an error.
+1. ```ModuleNotFoundError: No module named 'torch._C'```: 
+After installation when using McTorch make sure you have activate the conda environment and not in the same folder as McTorch as ```import torch``` tries to refer to the module in torch folder and throws an error. 
 
 For other os and optional dependencies go through [Installation](pytorch-README.md#installation).
 
@@ -137,7 +137,7 @@ McTorch is currently under development and any contributions, suggestions and fe
 
 McTorch is released under the open source [3-clause BSD License](LICENSE).
 
-## Team
+## Team 
 - [Mayank Meghwanshi](https://github.com/mayank127/)
 - [Bamdev Mishra](https://github.com/bamdevm)
 - [Pratik Jawanpuria](https://pratikjawanpuria.com)
@@ -145,7 +145,7 @@ McTorch is released under the open source [3-clause BSD License](LICENSE).
 - [Anoop Kunchukuttan](https://github.com/anoopkunchukuttan)
 
 ## Reference
-Please cite [1](https://arxiv.org/abs/1810.01811) if you found this code useful.
+Please cite [[1](https://arxiv.org/abs/1810.01811)] if you found this code useful.
 #### McTorch, a manifold optimization library for deep learning
 [1] M. Meghawanshi, P. Jawanpuria, A. Kunchukuttan, H. Kasai, and B. Mishra, [McTorch, a manifold optimization library for deep learning](https://arxiv.org/abs/1810.01811)
 
