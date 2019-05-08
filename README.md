@@ -103,27 +103,26 @@ All manifolds support k multiplier as well.
 
 
 ## Installation
-This is same as PyTorch installation from source. I have tried the installation with Python 3.5.6 and it will be preferred version for installation.
+This is same as PyTorch installation from source. I have tried the installation with Python 3.7 and it will be preferred version for installation.
 
 If you are installing from source, we highly recommend installing an Anaconda environment. 
 - Download  anaconda installer from here - [Anaconda](https://www.anaconda.com/download/) and follow GUI steps to install
-- Create an environment, from anaconda console prompt: ```conda create -n myenv python=3.5.6```
+- Create an environment, from anaconda console prompt: ```conda create -n myenv python=3.7```
 - Activate the environment: ```source activate myenv```
+- Install current release branch i.e. ```mctorch_1_1```
 
 ### Linux
 ```bash
 source activate myenv
-git clone --recursive https://github.com/mctorch/mctorch
-cd mctorch
-python setup.py install
+conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
+pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_1
 ```
 
 ### Mac OS
 ```bash
 source activate myenv
-git clone --recursive https://github.com/mctorch/mctorch
-cd mctorch
-MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ python setup.py install
+conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
+MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_1
 ```
 
 ### Installation FAQs
