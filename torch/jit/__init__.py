@@ -293,7 +293,6 @@ def save(m, f, _extra_files=DEFAULT_EXTRA_FILES_MAP):
     else:
         ret = m.save_to_buffer(_extra_files=_extra_files)
         f.write(ret)
->>>>>>> [jit] Document new features, fix some rst bugs (#19974)
 
 
 def get_trace_graph(f, args=(), kwargs=None, _force_outplace=False,
