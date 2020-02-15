@@ -18,9 +18,13 @@
 // could be able to support initialization of optionals from convertible type U, also
 // remove two old constructors optional(const T&) and optional(T&&) as it could be
 // handled by the template<U=T> case with default template argument.
+// - `constexpr struct in_place_t {} in_place{}` is moved to `c10/util/in_place.h`,
+// so that it can also be used in `c10/util/variant.h`.
 
 #ifndef C10_UTIL_OPTIONAL_H_
 #define C10_UTIL_OPTIONAL_H_
+
+#include <c10/util/in_place.h>
 
 #include <cassert>
 #include <functional>
@@ -150,8 +154,8 @@ inline constexpr typename std::remove_reference<T>::type&& constexpr_move(
 
 namespace detail_ {
 
-// VS 2015 doesn't handle constexpr well, so we need to skip these stuff.
-#if (defined _MSC_VER) && (_MSC_VER <= 1900)
+// VS doesn't handle constexpr well, so we need to skip these stuff.
+#if (defined _MSC_VER)
 template <typename T>
 T* static_addressof(T& ref) {
   return std::addressof(ref);
@@ -195,10 +199,6 @@ constexpr U convert(U v) {
 
 constexpr struct trivial_init_t {
 } trivial_init{};
-
-// 20.5.6, In-place construction
-constexpr struct in_place_t {
-} in_place{};
 
 // 20.5.7, Disengaged state indicator
 struct nullopt_t {
@@ -516,7 +516,7 @@ class optional : private OptionalBase<T> {
   // 20.5.4.4, Swap
   void swap(optional<T>& rhs) noexcept(
       std::is_nothrow_move_constructible<T>::value&& noexcept(
-          swap(std::declval<T&>(), std::declval<T&>()))) {
+          std::swap(std::declval<T&>(), std::declval<T&>()))) {
     if (initialized() == true && rhs.initialized() == false) {
       rhs.initialize(std::move(**this));
       clear();
@@ -597,7 +597,9 @@ class optional : private OptionalBase<T> {
     return contained_val();
   }
 
-  constexpr T const& value() const {
+  // This might be constexpr, but MSVC+cuda don't like combination of constexpr
+  // and throw.
+  T const& value() const {
     return initialized()
         ? contained_val()
         : (throw bad_optional_access("bad optional access"), contained_val());

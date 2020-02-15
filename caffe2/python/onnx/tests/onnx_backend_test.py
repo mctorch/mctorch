@@ -30,6 +30,8 @@ backend_test.exclude(r'(test_hardsigmoid'  # Does not support Hardsigmoid.
                      '|test_reduce_log_sum.*'  # Does not support ReduceLogSum.
                      '|test_reduce_prod.*'  # Does not support ReduceProd.
                      '|test_reduce_sum_square.*'  # Does not support ReduceSumSquare
+                     '|test_det.*'  # Does not support Det
+                     '|test_range.*'  # Does not support Range
                      '|test_tile.*'  # Tile's Caffe2 implementation needs some tweak
                      '|test_lstm.*'  # Seems LSTM case has some problem
                      '|test_simple_rnn.*'  # Seems simple RNN case has some problem
@@ -69,6 +71,22 @@ backend_test.exclude(r'(test_hardsigmoid'  # Does not support Hardsigmoid.
                      '|test_nonmaxsuppression.*'  # Needs implementation
                      '|test_reversesequence.*'  # Needs implementation
                      '|test_roialign.*'  # Needs implementation
+                     '|test_bitshift.*'  # Needs implementation
+                     '|test_round.*'  # Needs implementation
+                     '|test_cumsum.*'  # Needs implementation
+                     '|test_clip.*'  # opset 11 is not supported yet
+                     '|test_gather_elements.*'  # opset 11 is not supported yet
+                     '|test_scatter.*'  # opset 11 is not supported yet
+                     '|test_unique.*'  # opset 11 is not supported yet
+                     '|test_gathernd.*'  # opset 11 is not supported yet
+                     '|test_constant_pad.*'  # 1d pad is not supported
+                     '|test_edge_pad.*'  # 1d pad is not supported
+                     '|test_reflect_pad.*'  # 1d pad is not supported
+                     '|test_gemm_default_no_bias.*'  # no bias is not supported
+                     '|test_gemm_default_scalar_bias.*'  # incorrect type
+                     '|test_sequence_.*'  # type sequence is not supported yet
+                     '|test_.*negative_ax.*'  # negative axis is not supported yet
+                     '|test_.*negative_ind.*'  # negative axis is not supported yet
                      ')')
 
 # Quick patch to unbreak master CI, is working on the debugging.
@@ -89,11 +107,6 @@ backend_test.exclude('(test_pow_bcast'
 # Skip vgg to speed up CI
 if 'JENKINS_URL' in os.environ:
     backend_test.exclude(r'(test_vgg19|test_vgg)')
-
-if workspace.has_hip_support:
-    # TODO: Investigate flakiness in ROCM Softmax (it sometimes give NaN).
-    backend_test.exclude(r'test_softmax_.*_cuda')
-    backend_test.exclude(r'test_logsoftmax_.*_cuda')
 
 # import all test cases at global scope to make them visible to python.unittest
 globals().update(backend_test

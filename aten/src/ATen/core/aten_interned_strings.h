@@ -8,7 +8,6 @@
 // To explicitly use interned strings as symbols in your code, you must add
 // them to this list.
 
-#ifndef C10_MOBILE
 #define FORALL_ATEN_BASE_SYMBOLS(_) \
 _(aten, __and__) \
 _(aten, __iand__) \
@@ -42,6 +41,8 @@ _(aten, _cat) \
 _(aten, _ceil) \
 _(aten, _convolution) \
 _(aten, _convolution_double_backward) \
+_(aten, convolution_overrideable) \
+_(aten, convolution_backward_overrideable) \
 _(aten, _convolution_nogroup) \
 _(aten, _copy_ignoring_overlaps) \
 _(aten, _cos) \
@@ -200,6 +201,7 @@ _(aten, arange) \
 _(aten, argmax) \
 _(aten, argmin) \
 _(aten, as_strided) \
+_(aten, as_tensor) \
 _(aten, asin) \
 _(aten, atan) \
 _(aten, atan2) \
@@ -249,8 +251,6 @@ _(aten, conv3d) \
 _(aten, conv_tbc) \
 _(aten, conv_tbc_backward) \
 _(aten, conv_transpose1d) \
-_(aten, conv_transpose2d) \
-_(aten, conv_transpose3d) \
 _(aten, convolution) \
 _(aten, copy_sparse_to_sparse) \
 _(aten, cos) \
@@ -258,6 +258,8 @@ _(aten, cosh) \
 _(aten, cosine_embedding_loss) \
 _(aten, cosine_similarity) \
 _(aten, cross) \
+_(aten, std_mean) \
+_(aten, var_mean) \
 _(aten, ctc_loss) \
 _(aten, cudnn_affine_grid_generator) \
 _(aten, cudnn_affine_grid_generator_backward) \
@@ -285,6 +287,7 @@ _(aten, diag) \
 _(aten, diag_embed) \
 _(aten, diagflat) \
 _(aten, diagonal) \
+_(aten, fill_diagonal_) \
 _(aten, digamma) \
 _(aten, dim) \
 _(aten, dist) \
@@ -334,7 +337,7 @@ _(aten, full) \
 _(aten, full_like) \
 _(aten, gather) \
 _(aten, ge) \
-_(aten, gels) \
+_(aten, gelu) \
 _(aten, geometric) \
 _(aten, geqrf) \
 _(aten, ger) \
@@ -415,6 +418,7 @@ _(aten, logspace) \
 _(aten, logsumexp) \
 _(aten, lstm) \
 _(aten, lstm_cell) \
+_(aten, lstsq) \
 _(aten, lt) \
 _(aten, lu_solve) \
 _(aten, margin_ranking_loss) \
@@ -462,6 +466,8 @@ _(aten, miopen_depthwise_convolution) \
 _(aten, miopen_depthwise_convolution_backward) \
 _(aten, miopen_depthwise_convolution_backward_input) \
 _(aten, miopen_depthwise_convolution_backward_weight) \
+_(aten, miopen_rnn) \
+_(aten, miopen_rnn_backward) \
 _(aten, mkldnn_convolution) \
 _(aten, mkldnn_convolution_backward) \
 _(aten, mkldnn_convolution_backward_input) \
@@ -495,6 +501,8 @@ _(aten, native_tensor) \
 _(aten, native_zero) \
 _(aten, ne) \
 _(aten, neg) \
+_(aten, bitwise_not) \
+_(aten, bitwise_xor) \
 _(aten, nll_loss) \
 _(aten, nll_loss2d) \
 _(aten, nll_loss2d_backward) \
@@ -524,7 +532,6 @@ _(aten, pow) \
 _(aten, prelu) \
 _(aten, prelu_backward) \
 _(aten, prod) \
-_(aten, pstrf) \
 _(aten, put) \
 _(aten, qr) \
 _(aten, rand) \
@@ -574,7 +581,6 @@ _(aten, rrelu_with_noise) \
 _(aten, rrelu_with_noise_backward) \
 _(aten, rrelu_with_noise_forward) \
 _(aten, rsqrt) \
-_(aten, s_native_addmm) \
 _(aten, scatter) \
 _(aten, scatter_add) \
 _(aten, select) \
@@ -644,24 +650,20 @@ _(aten, th_zero) \
 _(aten, thnn_conv2d) \
 _(aten, thnn_conv2d_backward) \
 _(aten, thnn_conv2d_forward) \
-_(aten, thnn_conv3d) \
-_(aten, thnn_conv3d_backward) \
-_(aten, thnn_conv3d_forward) \
+_(aten, slow_conv3d) \
+_(aten, slow_conv3d_backward) \
+_(aten, slow_conv3d_forward) \
 _(aten, thnn_conv_depthwise2d) \
 _(aten, thnn_conv_depthwise2d_backward) \
 _(aten, thnn_conv_depthwise2d_forward) \
-_(aten, thnn_conv_dilated2d) \
-_(aten, thnn_conv_dilated2d_backward) \
-_(aten, thnn_conv_dilated2d_forward) \
-_(aten, thnn_conv_dilated3d) \
-_(aten, thnn_conv_dilated3d_backward) \
-_(aten, thnn_conv_dilated3d_forward) \
-_(aten, thnn_conv_transpose2d) \
-_(aten, thnn_conv_transpose2d_backward) \
-_(aten, thnn_conv_transpose2d_forward) \
-_(aten, thnn_conv_transpose3d) \
-_(aten, thnn_conv_transpose3d_backward) \
-_(aten, thnn_conv_transpose3d_forward) \
+_(aten, slow_conv_dilated2d) \
+_(aten, slow_conv_dilated2d_backward) \
+_(aten, slow_conv_dilated3d) \
+_(aten, slow_conv_dilated3d_backward) \
+_(aten, slow_conv_transpose2d) \
+_(aten, slow_conv_transpose2d_backward) \
+_(aten, slow_conv_transpose3d) \
+_(aten, slow_conv_transpose3d_backward) \
 _(aten, threshold) \
 _(aten, threshold_backward) \
 _(aten, to) \
@@ -768,6 +770,7 @@ _(attr, dimension) \
 _(attr, dims) \
 _(attr, dims_other) \
 _(attr, dims_self) \
+_(attr, divisor_override) \
 _(attr, dropout) \
 _(attr, dropout_seed) \
 _(attr, dropout_state) \
@@ -906,6 +909,8 @@ _(attr, padding_value) \
 _(attr, params) \
 _(attr, pdist) \
 _(attr, cdist) \
+_(attr, std_mean) \
+_(attr, var_mean) \
 _(attr, periodic) \
 _(attr, pivot) \
 _(attr, pivots) \
@@ -1013,4 +1018,3 @@ _(attr, workspace) \
 _(attr, x) \
 _(attr, x1) \
 _(attr, x2)
-#endif

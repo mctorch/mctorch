@@ -1,74 +1,18 @@
+#include <torch/csrc/jit/passes/python_print.h>
+#include <ATen/core/qualified_name.h>
 #include <c10/util/Exception.h>
+#include <c10/util/StringUtil.h>
 #include <torch/csrc/jit/attributes.h>
-#include <torch/csrc/jit/export.h>
 #include <torch/csrc/jit/ir.h>
 #include <torch/csrc/jit/ir_views.h>
-#include <torch/csrc/jit/passes/python_print.h>
 #include <torch/csrc/jit/resource_guard.h>
 #include <torch/csrc/jit/script/error_report.h>
 #include <torch/csrc/jit/script/module.h>
 
+using c10::QualifiedName;
+
 namespace torch {
 namespace jit {
-
-// unix isprint but insensitive to locale
-static bool isPrint(char s) {
-  return s > 0x1f && s < 0x7f;
-}
-
-void printQuotedString(std::ostream& stmt, const std::string& str) {
-  stmt << "\"";
-  for (auto s : str) {
-    switch (s) {
-      case '\\':
-        stmt << "\\\\";
-        break;
-      case '\'':
-        stmt << "\\'";
-        break;
-      case '\"':
-        stmt << "\\\"";
-        break;
-      case '\a':
-        stmt << "\\a";
-        break;
-      case '\b':
-        stmt << "\\b";
-        break;
-      case '\f':
-        stmt << "\\f";
-        break;
-      case '\n':
-        stmt << "\\n";
-        break;
-      case '\r':
-        stmt << "\\r";
-        break;
-      case '\t':
-        stmt << "\\t";
-        break;
-      case '\v':
-        stmt << "\\v";
-        break;
-      default:
-        if (isPrint(s)) {
-          stmt << s;
-        } else {
-          // C++ io has stateful formatting settings. Messing with
-          // them is probably worse than doing this manually.
-          char buf[4] = "000";
-          buf[2] += s % 8;
-          s /= 8;
-          buf[1] += s % 8;
-          s /= 8;
-          buf[0] += s;
-          stmt << "\\" << buf;
-        }
-        break;
-    }
-  }
-  stmt << "\"";
-}
 
 static bool isValidIdentifierChar(char c, size_t pos) {
   return islower(c) || isupper(c) || c == '_' || (pos > 0 && isdigit(c));
@@ -83,49 +27,6 @@ static bool isValidIdentifier(const std::string& name) {
   }
   return true;
 }
-
-// handles names of the form, e.g., self.a.b
-// if a field is not a valid identifier, then it will print as, e.g.
-// getattr(self, "0").b
-struct QualifiedName;
-using QualifiedNamePtr = c10::intrusive_ptr<QualifiedName>;
-struct QualifiedName : c10::intrusive_ptr_target {
-  QualifiedName(QualifiedNamePtr prefix, std::string name)
-      : prefix_(std::move(prefix)), name_(std::move(name)) {}
-  QualifiedNamePtr prefix_;
-  std::string name_;
-  static QualifiedNamePtr create(QualifiedNamePtr prefix, std::string name) {
-    return c10::make_intrusive<QualifiedName>(
-        std::move(prefix), std::move(name));
-  }
-  static QualifiedNamePtr create(std::string name) {
-    return c10::make_intrusive<QualifiedName>(
-        QualifiedNamePtr(), std::move(name));
-  }
-  std::string str() const {
-    std::stringstream ss;
-    emit(ss);
-    return ss.str();
-  }
-
- private:
-  void emit(std::ostream& out) const {
-    if (isValidIdentifier(name_)) {
-      if (prefix_) {
-        prefix_->emit(out);
-        out << ".";
-      }
-      out << name_;
-    } else {
-      AT_ASSERT(prefix_);
-      out << "getattr(";
-      prefix_->emit(out);
-      out << ", ";
-      printQuotedString(out, name_);
-      out << ")";
-    }
-  }
-};
 
 // some names are valid identifiers but off limits because
 // they are keywords or namespaces used in the output
@@ -177,58 +78,106 @@ const static std::unordered_set<std::string> reserved_names = {
     "while",
     "with",
     "yield",
+    "uninitialized",
+    "unchecked_cast",
 };
 
-struct PythonPrintPass {
-  std::ostringstream body_;
+struct PythonPrintImpl {
+  using SourceRangeStack = std::vector<SourceRange>;
+  SourceRangeStack source_range_stack_ = {SourceRange()};
 
-  // constants are written to this table, and given then named CONSTANTS.cN
-  // where N is the index into this table.
-  std::vector<at::Tensor>& tensor_table_;
+  struct WithSourceRange {
+    explicit WithSourceRange(SourceRangeStack* stack, Node* n) : stack(stack) {
+      TORCH_INTERNAL_ASSERT(stack);
+      if (auto gen_source = n->sourceRange().findSourceRangeThatGenerated()) {
+        stack->push_back(std::move(gen_source.value()));
+      } else {
+        stack->push_back(n->sourceRange());
+      }
+    }
 
-  // Any classes used are written to this table, to be later written out as
-  // dependencies.
-  std::vector<ClassTypePtr>& class_table_;
-  std::vector<ClassTypePtr> class_deps_;
+    ~WithSourceRange() {
+      stack->pop_back();
+    }
+
+    SourceRangeStack* stack;
+  };
+
+  class TaggedStringStream {
+   public:
+    TaggedStringStream(const SourceRangeStack* srs) : srs_(srs) {}
+
+    TaggedStringStream& operator<<(const std::string& s) {
+      // This prevents having redundant entries at the same offset,
+      // which can happen for example in printValueList when begin
+      // and end are the empty string.
+      if (s.size() == 0) {
+        return *this;
+      }
+
+      if (!ranges_.size() || ranges_.back().range != srs_->back()) {
+        ranges_.emplace_back((size_t)oss_.tellp(), srs_->back());
+      }
+      oss_ << s;
+      return *this;
+    }
+
+    TaggedStringStream& operator<<(const TaggedStringStream& rhs) {
+      for (const auto& range : rhs.ranges_) {
+        if (!ranges_.size() || ranges_.back().range != range.range) {
+          ranges_.emplace_back((size_t)oss_.tellp() + range.bytes, range.range);
+        }
+      }
+      oss_ << rhs.oss_.str();
+      return *this;
+    }
+
+    // This overload is here to prevent people from shooting themselves in the
+    // foot. I would be highly surprised if someone actually wanted to write out
+    // the address of a TaggedStringStream in the pretty print.
+    TaggedStringStream& operator<<(
+        const std::shared_ptr<TaggedStringStream>& rhs) {
+      (*this) << *rhs;
+      return *this;
+    }
+
+    template <typename T>
+    TaggedStringStream& operator<<(const T& t) {
+      if (!ranges_.size() || ranges_.back().range != srs_->back()) {
+        ranges_.emplace_back((size_t)oss_.tellp(), srs_->back());
+      }
+      oss_ << t;
+      return *this;
+    }
+
+    std::string str() const {
+      return oss_.str();
+    }
+
+    const std::vector<TaggedRange>& ranges() const {
+      return ranges_;
+    }
+
+   private:
+    std::ostringstream oss_;
+    std::vector<TaggedRange> ranges_;
+    const SourceRangeStack* srs_;
+  };
+
   // Helper to avoid duplicating class types
-  void addToClassTable(const ClassTypePtr& classType) {
-    // we serialize module classes separately.
-    // Including them in the class table as well will cause the code
-    // to get imported twice.
-    if (classType->qualname() == "__torch__.$Module") {
-      return;
-    }
-    if (std::find(class_table_.cbegin(), class_table_.cend(), classType) ==
-        class_table_.cend()) {
-      class_table_.push_back(classType);
-    }
-    if (std::find(class_deps_.cbegin(), class_deps_.cend(), classType) ==
-        class_deps_.cend()) {
-      class_deps_.push_back(classType);
+  void registerDependency(const c10::NamedTypePtr& type) {
+    // Need to do actual equality comparison, not a pointer equality. This is
+    // because for some types (e.g. FunctionType), we may have multiple
+    // TypePtr's that represent the same underlying thing.
+    auto it = std::find_if(
+        deps_table_.cbegin(),
+        deps_table_.cend(),
+        [&](const c10::NamedTypePtr& dep) { return *dep == *type; });
+
+    if (it == deps_table_.cend()) {
+      deps_table_.push_back(type);
     }
   }
-
-  // When printing this node, is it safe to write it inline (i.e. without
-  // assigning a temporary variable
-  std::unordered_set<Node*> output_inline_;
-
-  // when we print this, should we error if the resulting output would
-  // not be able to be reparsed?
-  bool enforce_importable_;
-
-  // are funcitons being printed considered methods
-  // either of a class or some module?
-  // If true, this will surpress type annotation on their
-  // first (self) argument. And forked functions will
-  // be emitted as method calls (self.__fork...) rather
-  // than as method calls
-  bool is_method_;
-
-  // what valid identifiers are in use for the current function
-  std::unordered_set<std::string> used_names_;
-
-  // used method names
-  std::unordered_set<std::string> used_method_names_;
 
   // scanValue, scanNode, scanBlock:
   // decide if it is safe to omit the output of a temporary variable,
@@ -264,7 +213,7 @@ struct PythonPrintPass {
     // if it has a name set, then it was written as a variable so preserve that
     // unless it is being fed directly to the end of the block.
     // in which case it is not as useful to give it a name just to return it
-    if (v->hasUniqueName() && use.user->kind() != prim::Return)
+    if (v->hasDebugName() && use.user->kind() != prim::Return)
       return false;
     // don't try to inline control blocks
     if (n->blocks().size() != 0)
@@ -278,6 +227,15 @@ struct PythonPrintPass {
     // subgraph may use this more than once, so disable inlining
     if (use.user->kind() == prim::fork)
       return false;
+
+    // isinstance appearing in an if expression
+    // causes type refinement to occur, but we have
+    // already handled the refinement and inserted cast
+    // expressions. By not inlining it into the if condition,
+    // we prevent it from happening again.
+    if (v->node()->kind() == prim::isinstance) {
+      return false;
+    }
 
     return true;
   }
@@ -342,7 +300,6 @@ struct PythonPrintPass {
         return i;
       }
     }
-    AT_ASSERT(t.is_variable());
     tensor_table_.emplace_back(std::move(t));
     return tensor_table_.size() - 1;
   }
@@ -366,7 +323,7 @@ struct PythonPrintPass {
     buildConstantList(b->return_node(), constants);
   }
 
-  // get a new name unique across calls to uniqueName() and
+  // get a new name unique across calls to debugName() and
   // anything we have used.
   std::unordered_map<std::string, size_t> next_id;
 
@@ -375,20 +332,13 @@ struct PythonPrintPass {
       std::unordered_set<std::string>& used) {
     std::string name = candidate;
     while (used.count(name) || reserved_names.count(name)) {
-      name = candidate + std::to_string(next_id[name]++);
+      name = candidate + c10::to_string(next_id[name]++);
     }
     used.insert(name);
     return name;
   }
   std::string genName(const std::string& candidate) {
     return genNameImpl(candidate, used_names_);
-  }
-
-  // methods self.foo are in a different namespace than
-  // global identifiers, so they have a different procedure for finding a
-  // uniquename
-  std::string genMethodName(const std::string& candidate) {
-    return genNameImpl(candidate, used_method_names_);
   }
 
   // unique names might not be valid identifiers,
@@ -406,20 +356,42 @@ struct PythonPrintPass {
     return ss.str();
   }
   // if we have to assign 'v' a name, what should it be?
-  // use the uniqueName if it was set, otherwise generate a name.
+  // use the debugName if it was set, otherwise generate a name.
   std::string genUniqueNameFor(Value* v) {
     return genName(
-        v->hasUniqueName() ? makeValidIdentifier(v->uniqueNameBase()) : "_");
+        v->hasDebugName() ? makeValidIdentifier(v->debugNameBase()) : "_");
   }
 
   // map from Value to how it should be printed at each use
-  std::unordered_map<Value*, std::string> value_names_;
+  std::unordered_map<Value*, std::shared_ptr<TaggedStringStream>> expr_table_;
+  std::unordered_map<Value*, std::string> ident_refs_;
 
-  std::string useOf(Value* v) const {
-    return value_names_.at(v);
+  // NB: we MUST pass around the shared pointers to these streams by value.
+  // There is an interaction in splitLongInlines where the string value for
+  // both the RHS and the LHS of an expression are live at the same time,
+  // however the value for the RHS is overwritten in the table.
+  std::shared_ptr<TaggedStringStream> useOf(Value* v) const {
+    // Ident refs take precedent over expression refs, since presence in
+    // the ident ref table indicates we have already emitted a statement
+    // assigning the given value.
+    if (ident_refs_.count(v)) {
+      auto rv = std::make_shared<TaggedStringStream>(&source_range_stack_);
+      (*rv) << ident_refs_.at(v);
+      return rv;
+    }
+    if (expr_table_.count(v)) {
+      return expr_table_.at(v);
+    }
+    TORCH_INTERNAL_ASSERT(
+        false,
+        "Value was not present in either expressions"
+        " table or ident refs table");
   }
   void assignValue(Value* v, const std::string& s) {
-    value_names_[v] = s;
+    ident_refs_[v] = s;
+  }
+  void assignValue(Value* v, std::shared_ptr<TaggedStringStream> s) {
+    expr_table_[v] = std::move(s);
   }
   void assignValue(Value* v, Value* w) {
     assignValue(v, useOf(w));
@@ -432,7 +404,7 @@ struct PythonPrintPass {
 
   size_t level = 0;
   // indent to the current indent level
-  std::ostream& indent() {
+  TaggedStringStream& indent() {
     for (size_t i = 0; i < level; ++i) {
       body_ << "  ";
     }
@@ -460,7 +432,7 @@ struct PythonPrintPass {
   }
 
   void printValueList(
-      std::ostream& stmt,
+      TaggedStringStream& stmt,
       at::ArrayRef<Value*> list,
       const char* begin = "",
       const char* end = "") {
@@ -474,8 +446,20 @@ struct PythonPrintPass {
     stmt << end;
   }
 
+  void printValueIndex(TaggedStringStream& stmt, at::ArrayRef<Value*> inputs) {
+    const std::string val_name = useOf(inputs[0])->str();
+    if (isValidIdentifier(val_name)) {
+      stmt << val_name;
+    } else {
+      stmt << "(" << val_name << ")";
+    }
+    stmt << "[";
+    stmt << useOf(inputs[1]);
+    stmt << "]";
+  }
+
   void printDict(
-      std::ostream& stmt,
+      TaggedStringStream& stmt,
       at::ArrayRef<Value*> key_value_pairs,
       const char* begin = "{",
       const char* end = "}") {
@@ -494,12 +478,30 @@ struct PythonPrintPass {
   }
 
   void printAssignment(at::ArrayRef<Value*> lhs, at::ArrayRef<Value*> rhs) {
-    if (lhs.size() > 0) {
+    if (lhs.size() == 0) {
+      return;
+    }
+    indent();
+    printValueList(body_, lhs);
+    body_ << " = ";
+    printValueList(body_, rhs);
+    body_ << "\n";
+  }
+
+  bool requiresAnnotation(Value* lhs, Value* rhs) {
+    return *lhs->type() != *rhs->type();
+  }
+
+  void printAnnotatedAssignment(
+      at::ArrayRef<Value*> lhs,
+      at::ArrayRef<Value*> rhs) {
+    for (size_t i = 0; i < lhs.size(); ++i) {
       indent();
-      printValueList(body_, lhs);
-      body_ << " = ";
-      printValueList(body_, rhs);
-      body_ << "\n";
+      body_ << useOf(lhs[i]);
+      if (requiresAnnotation(lhs[i], rhs[i])) {
+        body_ << ": " << lhs[i]->type()->python_str();
+      }
+      body_ << " = " << useOf(rhs[i]) << "\n";
     }
   }
 
@@ -520,45 +522,20 @@ struct PythonPrintPass {
     }
   }
 
-  // our way of encoding loops makes them difficult to turn back into python
-  // syntax. we have to check properties of the condition and trip count inputs
-  // to figure out which one it initially was
-  static bool shouldEmitAsForLoop(LoopView stmt) {
-    auto trip_count = toIValue(stmt.maxTripCount());
-    auto cond_input = toIValue(stmt.inputCond());
-    auto cond_next = toIValue(stmt.nextCond());
-
-    bool condition_is_always_true =
-        cond_input && cond_input->toBool() && cond_next && cond_next->toBool();
-    bool trip_count_is_specified = !trip_count || // trip is not a constant
-        trip_count->toInt() !=
-            std::numeric_limits<int64_t>::max() || // it is a constant but not
-                                                   // the default one
-        stmt.currentTripCount()->uses().size() >
-            0; // it is actually being used in the body.
-
-    if (condition_is_always_true) {
-      // if the trip count was not specified this was a user-written while True:
-      return trip_count_is_specified;
-    } else {
-      // this must be a while loop, but check that there isn't _also_ a trip
-      // count
-      if (trip_count_is_specified) {
-        throw script::ErrorReport(stmt.node()->getSourceLocation())
-            << "loop cannot be printed as python "
-            << "because it has gone through an optimization "
-            << "that combined while and for loops. File a bug.";
-      }
-      return false;
-    }
-  }
-
   void printLoop(LoopView stmt) {
     // Loop carried dependencies are handled by assigning their initial
     // values to the node->outputs() before the loop,
     // and assign node->outputs() to the new values at the end of each trip.
 
-    bool emit_as_for_loop = shouldEmitAsForLoop(stmt);
+    auto loop_type = stmt.loopType();
+    if (loop_type == LoopView::ModifiedLoop) {
+      throw script::ErrorReport(stmt.node()->sourceRange())
+          << "loop cannot be printed as python "
+          << "because it has gone through an optimization "
+          << "that combined while and for loops. File a bug";
+    }
+
+    bool emit_as_for_loop = loop_type == LoopView::For;
 
     assignValuesToTheirUniqueNames(stmt.carriedOutputs());
     // Add aliases for loop-carried dependencies
@@ -570,7 +547,7 @@ struct PythonPrintPass {
         });
 
     // Print initial assignments of loop node outputs = loop node inputs
-    printAssignment(stmt.carriedOutputs(), stmt.carriedInputs());
+    printAnnotatedAssignment(stmt.carriedOutputs(), stmt.carriedInputs());
 
     assignValuesToTheirUniqueNames(stmt.currentTripCount());
     // Loop header
@@ -606,7 +583,8 @@ struct PythonPrintPass {
   }
 
   bool isLongInline(Node* node) {
-    return output_inline_.count(node) && isLongLine(useOf(node->output()));
+    return output_inline_.count(node) &&
+        isLongLine(useOf(node->output())->str());
   }
 
   bool isNonConstantInline(Value* input) {
@@ -640,12 +618,13 @@ struct PythonPrintPass {
     // first place
     for (size_t i = 0; i < long_inline_slice; ++i) {
       if (isNonConstantInline(inputs[i])) {
-        printOutputDefinition(inputs[i]->node(), useOf(inputs[i]));
+        printOutputDefinition(inputs[i]->node(), *useOf(inputs[i]));
       }
     }
   }
 
-  void printOutputDefinition(Node* node, const std::string& str) {
+  template <typename T>
+  void printOutputDefinition(Node* node, const T& expr) {
     assignValuesToTheirUniqueNames(node->outputs());
     indent();
     // Print outputs
@@ -653,20 +632,25 @@ struct PythonPrintPass {
       printValueList(body_, node->outputs());
       body_ << " = ";
     }
-    body_ << str << "\n";
+    body_ << expr << "\n";
   }
 
   // Recursively check contained types for any class dependencies
   void registerClassDependencies(const TypePtr& type) {
     if (const auto classType = type->cast<ClassType>()) {
-      addToClassTable(classType);
+      registerDependency(classType);
+    } else if (const auto tupleType = type->cast<TupleType>()) {
+      if (tupleType->name()) {
+        registerDependency(tupleType);
+      }
+    } else if (const auto interfaceType = type->cast<InterfaceType>()) {
+      registerDependency(interfaceType);
     }
     for (const auto& containedType : type->containedTypes()) {
       registerClassDependencies(containedType);
     }
   }
-
-  void printNode(Node* node, bool print_const) {
+  void scanTypeDependencies(Node* node) {
     // Check for class dependencies. If this node inputs or outputs a class
     // type, we need to add it to our table of dependencies.
     for (const auto input : node->inputs()) {
@@ -675,25 +659,35 @@ struct PythonPrintPass {
     for (const auto output : node->outputs()) {
       registerClassDependencies(output->type());
     }
-
-    if (!print_const && node->kind() == prim::Constant)
-      return;
-    if (node->kind() == prim::PythonOp) {
-      auto value = static_cast<const PythonOp*>(node);
-      if (enforce_importable_ && value->ignore_on_export) {
-        // Op has been marked as ignored, so insert an error in its place
-        indent();
-        body_ << "ops.prim.IgnoredPythonOp()\n";
-        return;
+    for (const auto& name : node->attributeNames()) {
+      switch (node->kindOf(name)) {
+        case AttributeKind::ty:
+          registerClassDependencies(node->ty(name));
+          break;
+        case AttributeKind::tys:
+          for (const TypePtr& t : node->tys(name)) {
+            registerClassDependencies(t);
+          }
+          break;
+        default:
+          // noop
+          break;
       }
     }
+  }
+
+  void printNode(Node* node, bool print_const) {
+    WithSourceRange guard(&source_range_stack_, node);
+    scanTypeDependencies(node);
+    if (!print_const && node->kind() == prim::Constant)
+      return;
     splitLongInlines(node->inputs());
     switch (node->kind()) {
       case prim::Return:
         if (enforce_importable_ && node->inputs().size() != 1) {
-          throw script::ErrorReport(node->getSourceLocation())
+          throw script::ErrorReport(node->sourceRange())
               << "Exportable methods must have a single return value. "
-              << "Normal use of ScriptMethods should enforce this.";
+              << "Normal use of ScriptMethods should enforce this";
         }
         if (node->inputs().size() > 0) {
           indent();
@@ -746,11 +740,11 @@ struct PythonPrintPass {
       } break;
       case prim::Function: {
         if (enforce_importable_) {
-          throw script::ErrorReport(node->getSourceLocation())
+          throw script::ErrorReport(node->sourceRange())
               << "closures are not exportable";
         }
         assignValuesToTheirUniqueNames(node->outputs());
-        auto name = useOf(node->output());
+        auto name = useOf(node->output())->str();
         std::shared_ptr<Graph> graph = node->g(attr::Subgraph);
         indent();
         body_ << "def " << name << "(";
@@ -766,19 +760,19 @@ struct PythonPrintPass {
         printBody(graph->block());
       } break;
       default:
-        std::stringstream ss;
-        printRHS(ss, node);
+        auto ss = std::make_shared<TaggedStringStream>(&source_range_stack_);
+        printRHS(*ss, node);
 
         // we prevent long constants from inlining here.
         // it is not safe to do the same thing for non-constants here
         // because of [reordering of inlines]
         if (output_inline_.count(node) == 0 ||
-            (node->kind() == prim::Constant && isLongLine(ss.str()))) {
-          printOutputDefinition(node, ss.str());
+            (node->kind() == prim::Constant && isLongLine(ss->str()))) {
+          printOutputDefinition(node, *ss);
         } else {
           // this node is safe to inline, so assign the output value
           // to that expression directly
-          assignValue(node->output(), ss.str());
+          assignValue(node->output(), ss);
         }
     }
   }
@@ -795,129 +789,168 @@ struct PythonPrintPass {
     }
   }
 
-  void printConstant(std::ostream& stmt, const IValue& v) {
+  void printConstant(TaggedStringStream& stmt, const IValue& v) {
+    std::stringstream ss;
     if (v.isTensor()) {
-      stmt << "CONSTANTS.c" << getOrAddTensorConstant(v.toTensor());
+      ss << "CONSTANTS.c" << getOrAddTensorConstant(v.toTensor());
     } else if (v.isString()) {
-      printQuotedString(stmt, v.toStringRef());
+      c10::printQuotedString(ss, v.toStringRef());
     } else if (v.isDevice()) {
-      std::stringstream ss;
-      ss << v.toDevice();
-      stmt << "torch.device(";
-      printQuotedString(stmt, ss.str());
-      stmt << ")";
+      std::stringstream device_stream;
+      device_stream << v.toDevice();
+      ss << "torch.device(";
+      c10::printQuotedString(ss, device_stream.str());
+      ss << ")";
     } else if (v.isTensorList()) {
-      stmt << "[";
+      ss << "[";
       const char* delim = "";
-      for (const auto& t : v.toTensorListRef()) {
-        stmt << delim << "CONSTANTS.c" << getOrAddTensorConstant(t);
+      for (const at::Tensor& t : v.toTensorListRef()) {
+        ss << delim << "CONSTANTS.c" << getOrAddTensorConstant(t);
         delim = ", ";
       }
-      stmt << "]";
+      ss << "]";
     } else if (v.isBoolList()) {
-      printMaybeAnnotatedConstantList(
-          stmt, "bool", v.toBoolListRef().size(), v);
+      printMaybeAnnotatedConstantList(ss, "bool", v.toBoolList().size(), v);
     } else if (v.isIntList()) {
-      printMaybeAnnotatedConstantList(stmt, "int", v.toIntListRef().size(), v);
+      printMaybeAnnotatedConstantList(ss, "int", v.toIntListRef().size(), v);
     } else if (v.isDoubleList()) {
       printMaybeAnnotatedConstantList(
-          stmt, "float", v.toDoubleListRef().size(), v);
+          ss, "float", v.toDoubleListRef().size(), v);
     } else {
-      stmt << v;
+      ss << v;
     }
+    stmt << ss.str();
   }
 
-  void printNone(std::ostream& stmt, const Node* node) {
-    if (node->output()->type()->isSubtypeOf(NoneType::get())) {
-      stmt << "None";
-      return;
+  static bool elementTypeCanBeInferredFromMembers(const TypePtr& elem_type) {
+    if (elem_type->kind() == OptionalType::Kind) {
+      // it is possible that we are constructing an optional list, but all
+      // elements are present
+      return false;
     }
-    // XXX - when None has an Optional[T] type, we must ensure that type
-    // can be recovered on parsing. It cannot be recovered if it will be
-    // matched to schema with free variables. If it is used only in places
-    // where there is schema and the scheme has no free variables, then we
-    // can recover it without annotation. Otherwise, we annotate None with
-    // the right optional type
-    const auto& uses = node->output()->uses();
-    bool all_usable_schema =
-        std::all_of(uses.begin(), uses.end(), [](const Use& u) {
-          if (auto schema = u.user->maybeSchema()) {
-            if (u.offset >= schema->arguments().size()) {
-              return false;
-            }
-            return !schema->arguments().at(u.offset).type()->hasFreeVariables();
-          }
-          return false;
-        });
+    if (elem_type->kind() == InterfaceType::Kind) {
+      // since classes can be members of multiple interfaces, we cannot
+      // construct which interface the list holds from the members alone
+      return false;
+    }
+    return true;
+  }
 
-    if (all_usable_schema) {
-      stmt << "None";
+  void printOpName(TaggedStringStream& stmt, Symbol kind) {
+    // Special overriding ops set that requires serializing differently to
+    // preserve the original code semantics.
+    // This will be more properly handled when we have namespace semantics
+    // for serializing the ops, and it right now hard coded these ops to
+    // ensure consistency and not breaking BC in the future.
+    const static std::unordered_map<Symbol, std::string> override_symbols = {
+        {aten::backward, "torch.autograd.backward"},
+        {aten::grad, "torch.autograd.grad"},
+    };
+    if (override_symbols.find(kind) != override_symbols.end()) {
+      stmt << override_symbols.at(kind);
+    } else if (kind.is_aten()) {
+      // special case aten -> torch because we want to rename
+      // the aten namespace, but this change will take more time
+      // doing it here ensures we do not have fix up archives later
+      stmt << "torch." << kind.toUnqualString();
     } else {
-      stmt << "annotate(" << node->output()->type()->python_str() << ", None)";
+      stmt << "ops." << kind.ns().toUnqualString() << "."
+           << kind.toUnqualString();
     }
   }
 
   // Prints the RHS value of a Node, e.g. `aten.add(x, y)`
-  void printRHS(std::ostream& stmt, Node* node) {
+  void printRHS(TaggedStringStream& stmt, Node* node) {
     switch (node->kind()) {
       case prim::PythonOp: {
         auto value = static_cast<const PythonOp*>(node);
         if (enforce_importable_) {
-          throw script::ErrorReport(node->getSourceLocation())
-              << "could not export python function call " << value->name()
-              << ". Remove calls to Python functions before export. "
+          throw script::ErrorReport(node->sourceRange())
+              << "Could not export Python function call '" << value->name()
+              << "'. Remove calls to Python functions before export. "
               << "Did you forget add @script or @script_method annotation? "
-              << "If this is a nn.ModuleList, add it to __constants__.";
+              << "If this is a nn.ModuleList, add it to __constants__";
         }
-
+        std::stringstream scalars_stream;
         stmt << "^" << value->name();
-        value->writeScalars(stmt);
+        value->writeScalars(scalars_stream);
+        stmt << scalars_stream.str();
         printValueList(stmt, node->inputs(), "(", ")");
       } break;
+      case prim::Uninitialized: {
+        stmt << "uninitialized(" << node->output()->type()->python_str() << ")";
+      } break;
       case prim::Constant: {
-        if (node->kind() == prim::Constant && !node->mustBeNone()) {
+        if (node->outputs().size() == 1 &&
+            node->output()->type()->kind() == TypeKind::FunctionType) {
+          auto fn = node->output()->type()->expect<FunctionType>();
+          registerDependency(fn);
+          stmt << fn->name()->qualifiedName();
+        } else if (!node->mustBeNone()) {
           IValue v = toIValue(node->output()).value();
           printConstant(stmt, v);
         } else {
-          printNone(stmt, node);
+          stmt << "None";
         }
       } break;
       case prim::ImplicitTensorToNum: {
         stmt << "annotate(" << node->output()->type()->python_str() << ", "
              << useOf(node->input()) << ")";
       } break;
-      case prim::Int: {
+      case aten::Int: {
         printValueList(stmt, node->inputs(), "int(", ")");
       } break;
-      case prim::Float: {
+      case aten::Float: {
         printValueList(stmt, node->inputs(), "float(", ")");
       } break;
-      case prim::Bool: {
+      case aten::Bool: {
         printValueList(stmt, node->inputs(), "bool(", ")");
+      } break;
+      case aten::str: {
+        printValueList(stmt, node->inputs(), "str(", ")");
+      } break;
+      case aten::__getitem__: {
+        printValueIndex(stmt, node->inputs());
       } break;
       case prim::Print: {
         printValueList(stmt, node->inputs(), "print(", ")");
       } break;
+      case aten::sorted: {
+        printValueList(stmt, node->inputs(), "sorted(", ")");
+      } break;
       case prim::TupleConstruct: {
+        if (auto qualname =
+                node->output()->type()->expect<TupleType>()->name()) {
+          stmt << qualname->qualifiedName();
+        }
         printValueList(
             stmt, node->inputs(), "(", node->inputs().size() == 1 ? ",)" : ")");
       } break;
       case prim::TupleIndex: {
-        stmt << "(" << useOf(node->input()) << ")[" << node->i(attr::index)
-             << "]";
+        stmt << "(" << useOf(node->inputs().at(0)) << ")["
+             << useOf(node->inputs().at(1)) << "]";
       } break;
       case prim::TupleSlice: {
         stmt << "(" << useOf(node->input()) << ")[" << node->i(attr::beg) << ":"
              << node->i(attr::end) << "]";
       } break;
       case prim::ListConstruct: {
-        // when the list is empty and is not a list of tensors,
-        // we need to annotate it, otherwise it won't be possible
-        // to infer the type on import
-        if (node->inputs().size() == 0 &&
-            !node->output()->type()->isSubtypeOf(TensorType::get())) {
-          stmt << "annotate(" << node->output()->type()->python_str()
-               << ", [])";
+        ListTypePtr list_type = node->output()->type()->expect<ListType>();
+        TypePtr elem_type = list_type->getElementType();
+        if (!elem_type->isSubtypeOf(TensorType::get())) {
+          // when the list is empty and is not a list of tensors,
+          // we need to annotate it, otherwise it won't be possible
+          // to infer the type on import
+          if (node->inputs().size() == 0) {
+            stmt << "annotate(" << node->output()->type()->python_str()
+                 << ", [])";
+          } else if (!elementTypeCanBeInferredFromMembers(elem_type)) {
+            stmt << "annotate(" << node->output()->type()->python_str() << ",";
+            printValueList(stmt, node->inputs(), "[", "]");
+            stmt << ")";
+          } else {
+            printValueList(stmt, node->inputs(), "[", "]");
+          }
         } else {
           printValueList(stmt, node->inputs(), "[", "]");
         }
@@ -934,10 +967,6 @@ struct PythonPrintPass {
           printDict(stmt, node->inputs());
         }
       } break;
-      case prim::DictIndex: {
-        stmt << "(" << useOf(node->inputs().at(0)) << ")["
-             << useOf(node->inputs().at(1)) << "]";
-      } break;
       case prim::CreateObject: {
         const auto classType = node->output()->type()->expect<ClassType>();
         stmt << classType->python_str() << ".__new__("
@@ -951,22 +980,101 @@ struct PythonPrintPass {
           stmt << useOf(obj) << "." << field;
         } else {
           stmt << "getattr(" << useOf(obj) << ", ";
-          printQuotedString(stmt, field);
-          stmt << ")";
+          std::stringstream field_stream;
+          c10::printQuotedString(field_stream, field);
+          stmt << field_stream.str() << ")";
         }
       } break;
-      default: {
-        Symbol kind = node->kind();
-        if (kind.is_aten()) {
-          // special case aten -> torch because we want to rename
-          // the aten namespace, but this change will take more time
-          // doing it here ensures we do not have fix up archives later
-          stmt << "torch." << kind.toUnqualString() << "(";
-        } else {
-          stmt << "ops." << kind.ns().toUnqualString() << "."
-               << kind.toUnqualString() << "(";
+      case prim::CallFunction: {
+        stmt << useOf(node->inputs().at(0)) << "(";
+        for (size_t i = 1; i < node->inputs().size(); i++) {
+          stmt << useOf(node->inputs()[i]) << ", ";
         }
+        stmt << ")";
+      } break;
+      case prim::CallMethod: {
+        const auto& self = node->inputs().at(0);
+        const auto& methodName = node->s(attr::name);
+        stmt << "(" << useOf(self) << ")"
+             << "." << methodName << "(";
+        for (size_t i = 1; i < node->inputs().size(); i++) {
+          stmt << useOf(node->inputs()[i]) << ", ";
+        }
+        stmt << ")";
+
+        if (auto selfClass = self->type()->cast<ClassType>()) {
+          registerDependency(selfClass);
+          const auto method = selfClass->getMethod(node->s(attr::name));
+          TORCH_INTERNAL_ASSERT(
+              method->qualname() ==
+              QualifiedName(selfClass->name()->qualifiedName(), methodName));
+        } else if (auto selfInterface = self->type()->cast<InterfaceType>()) {
+          registerDependency(selfInterface);
+        } else {
+          TORCH_INTERNAL_ASSERT(
+              false, "method call to unhandled type in serialization");
+        }
+
+      } break;
+      case aten::_unwrap_optional: {
+        printOpName(stmt, node->kind());
+        stmt << "(";
+        // we cannot recover the type of unwrap_optional(None),
+        // using normal schema matching, so we route around this by rewriting
+        // the call to unwrap_optional(annotated(Optional[T], None))
+        if (node->input()->type()->isSubtypeOf(NoneType::get()) ||
+            node->input()->mustBeNone()) {
+          auto input_type = OptionalType::create(node->output()->type());
+          stmt << "annotate(" << input_type->python_str() << ", "
+               << useOf(node->input()) << ")";
+        } else {
+          stmt << useOf(node->input());
+        }
+        stmt << ")";
+      } break;
+      // unchecked_unwrap_optional is no longer generated by the compiler,
+      // but may end up here if it was first loaded from a old model and
+      // re-saved. On re-save we upgrade it to an unchecked_cast, which is an
+      // equivalent op
+      case prim::unchecked_unwrap_optional:
+      case prim::unchecked_cast: {
+        stmt << "unchecked_cast(" << node->output()->type()->python_str()
+             << ", " << useOf(node->input()) << ")";
+      } break;
+      case prim::isinstance: {
+        stmt << "isinstance(" << useOf(node->input()) << ", ";
+        const auto& types = node->tys(attr::types);
+        const auto& kinds = node->ss(attr::kinds);
+        if (types.size() == 1 && kinds.size() == 0) {
+          stmt << types.at(0)->python_str();
+        } else if (kinds.size() == 1 && types.size() == 0) {
+          stmt << kinds.at(0);
+        } else {
+          // check multiple things, e.g. (str, list, int)
+          stmt << "(";
+          bool first = true;
+          for (const TypePtr& typ : types) {
+            if (!first) {
+              stmt << ", ";
+            }
+            stmt << typ->python_str();
+            first = false;
+          }
+          for (const std::string& kind : kinds) {
+            if (!first) {
+              stmt << ", ";
+            }
+            stmt << kind;
+            first = false;
+          }
+          stmt << ")";
+        }
+        stmt << ")";
+      } break;
+      default: {
+        printOpName(stmt, node->kind());
         const FunctionSchema& schema = node->schema();
+        stmt << "(";
         for (size_t i = 0; i < node->inputs().size(); ++i) {
           if (i > 0) {
             stmt << ", ";
@@ -982,14 +1090,14 @@ struct PythonPrintPass {
             // vararg functions like format can have extra arguments
             AT_ASSERT(schema.is_vararg());
           }
-          stmt << v;
+          stmt << *v;
         }
         stmt << ")";
       } break;
     }
   }
 
-  std::ostream& printBlock(Block* root, bool block_has_other_statements) {
+  TaggedStringStream& printBlock(Block* root, bool block_has_other_statements) {
     // pythons weird 'pass' syntax creates a bunch of places where we have to
     // check if this block would be empty. But not everything in a block is a
     // node. Sometimes if, loop, and return statements will follow this block
@@ -1007,7 +1115,7 @@ struct PythonPrintPass {
 
   void printDefaultValue(
       const TypePtr& typ,
-      std::ostream& stmt,
+      TaggedStringStream& stmt,
       const IValue& value) {
     // xxx - many weak script modules store default values for broadcasting
     // lists that are not actually the same type as the argument. We can only
@@ -1043,10 +1151,14 @@ struct PythonPrintPass {
   }
 
  public:
-  void printFunction(script::Function& func) {
+  void printFunction(
+      const Function& func,
+      bool print_first_argument_type = true) {
     const FunctionSchema& schema = func.getSchema();
     Graph& graph = *func.graph();
     used_names_.clear(); // each graph can reuse local names
+
+    WithSourceRange guard(&source_range_stack_, graph.param_node());
 
     indent();
     body_ << "def " << func.name() << "(";
@@ -1055,9 +1167,9 @@ struct PythonPrintPass {
       std::string arg_name = genName(arg.name());
       if (param_it == graph.inputs().begin()) {
         // the first argument may omit its type when it is implied by context
-        // the flag is_method_ determines when to do this
+        // the flag print_first_argument_type determines when to do this
         body_ << arg_name;
-        if (!is_method_) {
+        if (print_first_argument_type) {
           body_ << ": " << arg.type()->python_str();
         }
       } else {
@@ -1069,105 +1181,192 @@ struct PythonPrintPass {
       assignValue(*param_it++, arg_name);
     }
 
-    body_ << ") -> " << resultType(graph)->python_str() << ":\n";
+    body_ << ") -> " << schema.returns().at(0).type()->python_str() << ":\n";
     printBody(graph.block());
   }
 
-  std::string getImports() {
-    std::ostringstream ret;
-    std::unordered_set<std::string> already_printed;
-    for (const auto& c : class_deps_) {
-      if (already_printed.count(c->qualifier())) {
-        continue;
-      }
-      ret << "import " << c->qualifier() << "\n";
-      already_printed.insert(c->qualifier());
-    }
-    return ret.str();
+  void printMethod(const Function& func) {
+    printFunction(func, /*print_first_argument_type=*/false);
   }
 
-  PythonPrintPass(
+  PythonPrintImpl(
       std::vector<at::Tensor>& tensor_table,
-      std::vector<ClassTypePtr>& class_table,
-      bool enforce_importable,
-      bool is_method)
-      : tensor_table_(tensor_table),
-        class_table_(class_table),
-        enforce_importable_(enforce_importable),
-        is_method_(is_method) {}
+      std::vector<c10::NamedTypePtr>& deps_table,
+      bool enforce_importable)
+      : body_(&source_range_stack_),
+        tensor_table_(tensor_table),
+        deps_table_(deps_table),
+        enforce_importable_(enforce_importable) {}
 
-  // TODO: we should consider forcing functions to return a single value
-  // instead of handling this tuple logic both in the compiler and the printer
-  TypePtr resultType(const Graph& graph) {
-    if (graph.outputs().size() == 1) {
-      return graph.outputs().at(0)->type();
-    } else {
-      return TupleType::create(
-          fmap(graph.outputs(), [&](const Value* v) { return v->type(); }));
-    }
-  }
-
-  void printCompilationUnit(script::CompilationUnit& cu) {
-    for (auto& func : cu.get_functions()) {
-      printFunction(*func);
-    }
-  }
-
-  void printClass(const ClassTypePtr& classType) {
-    body_ << "class " << classType->basename() << ":\n";
-    {
-      const auto guard = WithIndented();
-      for (auto& method : classType->methods()) {
-        printFunction(*method);
+  void printModuleMetadata(const ClassTypePtr& moduleType) {
+    std::vector<std::string> params;
+    size_t numAttrs = moduleType->numAttributes();
+    // Populate the __parameters__ field. This tells the importer which
+    // attributes are parameters.
+    for (size_t i = 0; i < numAttrs; i++) {
+      if (moduleType->is_parameter(i)) {
+        params.push_back(moduleType->getAttributeName(i));
       }
     }
-    // remove `classType` from the list of deps
-    class_deps_.erase(
-        std::remove(class_deps_.begin(), class_deps_.end(), classType),
-        class_deps_.end());
+    indent();
+    body_ << "__parameters__ = [";
+    for (const auto& param : params) {
+      body_ << "\"" << param << "\", ";
+    }
+    body_ << "]\n";
+
+    for (size_t i = 0; i < numAttrs; i++) {
+      const auto& name = moduleType->getAttributeName(i);
+      const auto& type = moduleType->getAttribute(name);
+      registerClassDependencies(type);
+
+      indent();
+
+      // Handling for when the attribute name is not a valid Python identifier.
+      // This happens for, e.g. ModuleList.
+      if (!isValidIdentifier(name)) {
+        if (i == 0) {
+          // Initialize the annotations dict if necessary.
+          body_ << "__annotations__ = []\n";
+          indent();
+        }
+        // Print out a direct manipulation of the annotations dict, like:
+        //   __annotations__["0"] = SomeType
+        body_ << "__annotations__["
+              << "\"" << name << "\"] = " << type->python_str() << "\n";
+      } else {
+        // Otherwise: just emit a python 3 attribute annotation, like:
+        //   foo : SomeType
+        body_ << name << " : " << type->python_str() << "\n";
+      }
+    }
   }
 
-  void print(std::ostream& out) {
-    out << getImports() << body_.str();
+  void printNamedType(const c10::NamedTypePtr& type) {
+    if (auto functionType = type->cast<FunctionType>()) {
+      printFunction(*functionType->function());
+    } else if (auto classType = type->cast<ClassType>()) {
+      bool is_module = classType->is_module();
+      body_ << "class " << classType->name()->name();
+      if (is_module) {
+        body_ << "(Module)";
+      }
+
+      body_ << ":\n";
+      {
+        const auto guard = WithIndented();
+        // For modules, we need to print special information about the module's
+        // attributes and parameters.
+        if (is_module) {
+          printModuleMetadata(classType);
+        }
+        // TODO fields
+        for (auto& method : classType->methods()) {
+          printFunction(*method);
+        }
+      }
+    } else if (auto tupleType = type->cast<TupleType>()) {
+      TORCH_INTERNAL_ASSERT(tupleType->schema());
+      body_ << "class " << tupleType->name()->name();
+      body_ << "(NamedTuple):\n";
+      {
+        const auto guard = WithIndented();
+        for (const auto& attr : tupleType->schema()->arguments()) {
+          TORCH_INTERNAL_ASSERT(attr.type());
+          indent();
+          body_ << attr.name() << " : " << attr.type()->python_str() << "\n";
+        }
+      }
+    } else if (auto interfaceType = type->cast<InterfaceType>()) {
+      body_ << "class " << interfaceType->name()->name();
+      if (interfaceType->is_module()) {
+        body_ << "(ModuleInterface):\n";
+      } else {
+        body_ << "(Interface):\n";
+      }
+      {
+        auto guard = WithIndented();
+        for (const FunctionSchema& method : interfaceType->methods()) {
+          indent();
+          body_ << "def " << method.name() << "(self";
+          TORCH_INTERNAL_ASSERT(
+              method.arguments().size() > 0 &&
+              method.arguments().at(0).name() == "self");
+          for (const Argument& arg :
+               at::ArrayRef<Argument>(method.arguments()).slice(1)) {
+            auto type = arg.type();
+            registerClassDependencies(type);
+            body_ << ", " << arg.name() << ": " << type->python_str();
+          }
+          auto return_type = method.returns().at(0).type();
+          registerClassDependencies(return_type);
+          body_ << ") -> " << return_type->python_str() << ":\n";
+          indent();
+          body_ << "  pass\n";
+        }
+      }
+    } else {
+      TORCH_INTERNAL_ASSERT(false, "Unhandled NamedType");
+    }
   }
+
+  ~PythonPrintImpl() {}
+
+  TaggedStringStream body_;
+  // When printing this node, is it safe to write it inline (i.e. without
+  // assigning a temporary variable
+  std::unordered_set<Node*> output_inline_;
+
+  // what valid identifiers are in use for the current function
+  std::unordered_set<std::string> used_names_;
+
+  // constants are written to this table, and given then named CONSTANTS.cN
+  // where N is the index into this table.
+  std::vector<at::Tensor>& tensor_table_;
+
+  // Any NamedTypes (classes, functions, NamedTuples) used are written to this
+  // table.
+  std::vector<c10::NamedTypePtr>& deps_table_;
+
+  // when we print this, should we error if the resulting output would
+  // not be able to be reparsed?
+  bool enforce_importable_;
 };
 
-void PythonPrint(
-    std::ostream& out,
-    const script::Function& func,
-    bool is_method,
+PythonPrint::PythonPrint(
     std::vector<at::Tensor>& tensor_table,
-    std::vector<ClassTypePtr>& class_table,
-    bool enforce_importable) {
-  PythonPrintPass pp(tensor_table, class_table, enforce_importable, is_method);
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
-  pp.printFunction(const_cast<script::Function&>(func));
-  pp.print(out);
+    std::vector<c10::NamedTypePtr>& deps_table,
+    bool enforce_importable)
+    : pImpl(std::make_shared<PythonPrintImpl>(
+          tensor_table,
+          deps_table,
+          enforce_importable)) {}
+
+void PythonPrint::printNamedType(const c10::NamedTypePtr& type) {
+  pImpl->printNamedType(type);
 }
 
-void PythonPrint(
-    std::ostream& out,
-    const script::CompilationUnit& cu,
-    bool is_method,
-    std::vector<at::Tensor>& tensor_table,
-    std::vector<ClassTypePtr>& class_table,
-    bool enforce_importable) {
-  PythonPrintPass pp(tensor_table, class_table, enforce_importable, is_method);
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
-  pp.printCompilationUnit(const_cast<script::CompilationUnit&>(cu));
-  pp.print(out);
+void PythonPrint::printFunction(const Function& func) {
+  pImpl->printFunction(func);
 }
 
-void PythonPrint(
-    std::ostream& out,
-    const ClassTypePtr& classType,
-    std::vector<at::Tensor>& tensor_table,
-    std::vector<ClassTypePtr>& class_table,
-    bool enforce_importable) {
-  PythonPrintPass pp(tensor_table, class_table, enforce_importable, true);
-  pp.printClass(classType);
-  pp.print(out);
+void PythonPrint::printMethod(const Function& func) {
+  pImpl->printMethod(func);
 }
+
+std::string PythonPrint::str() const {
+  return pImpl->body_.str();
+}
+
+const SourceRangeRecords& PythonPrint::ranges() const {
+  return pImpl->body_.ranges();
+}
+
+void PythonPrint::LEGACY_printOpVersion() {
+  pImpl->body_ << "op_version_set = 1\n";
+}
+
+PythonPrint::~PythonPrint() = default;
 
 bool printerHasSpecialCaseFor(Symbol sym) {
   // WARNING: by adding a value to this set, you are asserting
@@ -1179,6 +1378,7 @@ bool printerHasSpecialCaseFor(Symbol sym) {
   // that require special handling because they do not fit normal schema
   const static std::unordered_set<Symbol> handled = {
       prim::Constant,
+      prim::Uninitialized,
       prim::fork,
       prim::ListConstruct,
       prim::DictConstruct,
@@ -1187,12 +1387,14 @@ bool printerHasSpecialCaseFor(Symbol sym) {
       prim::PythonOp,
       prim::TupleConstruct,
       prim::TupleIndex,
-      prim::DictIndex,
       prim::TupleSlice,
       prim::TupleUnpack,
       prim::CreateObject,
       prim::GetAttr,
       prim::SetAttr,
+      prim::CallFunction,
+      prim::isinstance,
+      prim::unchecked_cast,
   };
 
   // WARNING: by adding a value to this set, you are asserting that your
@@ -1216,6 +1418,7 @@ bool printerHasSpecialCaseFor(Symbol sym) {
       prim::MMTreeReduce, // used as an optimization
       prim::MMBatchSide, // used as an optimization
       prim::Store, // used in interpreter only
+      prim::profile, // used in interpreter only
 
   };
 
@@ -1230,6 +1433,5 @@ bool printerHasSpecialCaseFor(Symbol sym) {
   return handled.count(sym) || unneeded.count(sym) ||
       !required_namespaces.count(sym.ns());
 }
-
 } // namespace jit
 } // namespace torch

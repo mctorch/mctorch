@@ -5,14 +5,17 @@ from torch.nn.parameter import Parameter
 from .. import functional as F
 from .. import init
 from .module import Module
+
 from .utils import _single, _pair, _triple, multiply_tuple
 from ..manifolds import create_manifold_parameter
-from ..._jit_internal import weak_module, weak_script_method, List
+from ..._jit_internal import List
 
-@weak_module
+
 class _ConvNd(Module):
 
-    __constants__ = ['stride', 'padding', 'dilation', 'groups', 'bias', 'padding_mode']
+    __constants__ = ['stride', 'padding', 'dilation', 'groups', 'bias',
+                     'padding_mode', 'output_padding', 'in_channels',
+                     'out_channels', 'kernel_size']
 
     def __init__(self, in_channels, out_channels, kernel_size, stride,
                  padding, dilation, transposed, output_padding,
@@ -89,10 +92,16 @@ class _ConvNd(Module):
             s += ', groups={groups}'
         if self.bias is None:
             s += ', bias=False'
+        if self.padding_mode != 'zeros':
+            s += ', padding_mode={padding_mode}'
         return s.format(**self.__dict__)
 
+    def __setstate__(self, state):
+        super(_ConvNd, self).__setstate__(state)
+        if not hasattr(self, 'padding_mode'):
+            self.padding_mode = 'zeros'
 
-@weak_module
+
 class Conv1d(_ConvNd):
     r"""Applies a 1D convolution over an input signal composed of several input
     planes.
@@ -215,7 +224,6 @@ class Conv1d(_ConvNd):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             False, _single(0), groups, bias, padding_mode, weight_manifold, transpose_flag)
 
-    @weak_script_method
     def forward(self, input):
         if self.padding_mode == 'circular':
             expanded_padding = ((self.padding[0] + 1) // 2, self.padding[0] // 2)
@@ -226,7 +234,6 @@ class Conv1d(_ConvNd):
                         self.padding, self.dilation, self.groups)
 
 
-@weak_module
 class Conv2d(_ConvNd):
     r"""Applies a 2D convolution over an input signal composed of several input
     planes.
@@ -362,19 +369,19 @@ class Conv2d(_ConvNd):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             False, _pair(0), groups, bias, padding_mode, weight_manifold, transpose_flag)
 
-    @weak_script_method
-    def forward(self, input):
+    def conv2d_forward(self, input, weight):
         if self.padding_mode == 'circular':
             expanded_padding = ((self.padding[1] + 1) // 2, self.padding[1] // 2,
                                 (self.padding[0] + 1) // 2, self.padding[0] // 2)
             return F.conv2d(F.pad(input, expanded_padding, mode='circular'),
-                            self.weight, self.bias, self.stride,
+                            weight, self.bias, self.stride,
                             _pair(0), self.dilation, self.groups)
-        return F.conv2d(input, self.weight, self.bias, self.stride,
+        return F.conv2d(input, weight, self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
+    def forward(self, input):
+        return self.conv2d_forward(input, self.weight)
 
-@weak_module
 class Conv3d(_ConvNd):
     r"""Applies a 3D convolution over an input signal composed of several input
     planes.
@@ -504,7 +511,6 @@ class Conv3d(_ConvNd):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             False, _triple(0), groups, bias, padding_mode, weight_manifold, transpose_flag)
 
-    @weak_script_method
     def forward(self, input):
         if self.padding_mode == 'circular':
             expanded_padding = ((self.padding[2] + 1) // 2, self.padding[2] // 2,
@@ -517,25 +523,7 @@ class Conv3d(_ConvNd):
                         self.padding, self.dilation, self.groups)
 
 
-@weak_module
 class _ConvTransposeMixin(object):
-    __constants__ = ['stride', 'padding', 'kernel_size', 'dim_size',
-                     'output_padding', 'groups', 'dilation', 'transposed',
-                     'bias', 'padding_mode']
-
-    @weak_script_method
-    def forward(self, input, output_size=None):
-        # type(Tensor, Optional[List[int]]) -> Tensor
-        output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
-        func = self._backend.ConvNd(
-            self.stride, self.padding, self.dilation, self.transposed,
-            output_padding, self.groups)
-        if self.bias is None:
-            return func(input, self.weight)
-        else:
-            return func(input, self.weight, self.bias)
-
-    @weak_script_method
     def _output_padding(self, input, output_size, stride, padding, kernel_size):
         # type: (Tensor, Optional[List[int]], List[int], List[int], List[int]) -> List[int]
         if output_size is None:
@@ -575,7 +563,6 @@ class _ConvTransposeMixin(object):
         return ret
 
 
-@weak_module
 class ConvTranspose1d(_ConvTransposeMixin, _ConvNd):
     r"""Applies a 1D transposed convolution operator over an input image
     composed of several input planes.
@@ -681,7 +668,6 @@ class ConvTranspose1d(_ConvTransposeMixin, _ConvNd):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             True, output_padding, groups, bias, padding_mode, weight_manifold, transpose_flag)
 
-    @weak_script_method
     def forward(self, input, output_size=None):
         # type: (Tensor, Optional[List[int]]) -> Tensor
         if self.padding_mode != 'zeros':
@@ -693,7 +679,6 @@ class ConvTranspose1d(_ConvTransposeMixin, _ConvNd):
             output_padding, self.groups, self.dilation)
 
 
-@weak_module
 class ConvTranspose2d(_ConvTransposeMixin, _ConvNd):
     r"""Applies a 2D transposed convolution operator over an input image
     composed of several input planes.
@@ -834,7 +819,6 @@ class ConvTranspose2d(_ConvTransposeMixin, _ConvNd):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             True, output_padding, groups, bias, padding_mode, weight_manifold, transpose_flag)
 
-    @weak_script_method
     def forward(self, input, output_size=None):
         # type: (Tensor, Optional[List[int]]) -> Tensor
         if self.padding_mode != 'zeros':
@@ -847,7 +831,6 @@ class ConvTranspose2d(_ConvTransposeMixin, _ConvNd):
             output_padding, self.groups, self.dilation)
 
 
-@weak_module
 class ConvTranspose3d(_ConvTransposeMixin, _ConvNd):
     r"""Applies a 3D transposed convolution operator over an input image composed of several input
     planes.
@@ -984,7 +967,6 @@ class ConvTranspose3d(_ConvTransposeMixin, _ConvNd):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             True, output_padding, groups, bias, padding_mode, weight_manifold, transpose_flag)
 
-    @weak_script_method
     def forward(self, input, output_size=None):
         # type: (Tensor, Optional[List[int]]) -> Tensor
         if self.padding_mode != 'zeros':

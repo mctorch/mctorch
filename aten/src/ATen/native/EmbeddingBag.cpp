@@ -5,17 +5,15 @@
 
 #include <TH/THBlasUtils.h>
 
-#include <caffe2/perfkernels/embedding_lookup.h>
+#include <caffe2/perfkernels/embedding_lookup_idx.h>
 
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <sstream>
 #include <vector>
+#include <algorithm>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 namespace {
   const int MODE_SUM = 0;
@@ -28,7 +26,7 @@ namespace native {
 
 static void make_offset2bag(const Tensor &offsets, const Tensor &indices, Tensor& offset2bag) {
   offset2bag.index_add_(
-      0, offsets, at::ones_like(offsets)); // offset2bag = [1 0 1 0 1]
+      0, offsets, at::ones_like(offsets, LEGACY_CONTIGUOUS_MEMORY_FORMAT)); // offset2bag = [1 0 1 0 1]
   offset2bag[0] -= 1;                     // offset2bag = [0 0 1 0 1]
   offset2bag = offset2bag.cumsum(0);     // offset2bag = [0 0 1 1 2]
 }
@@ -53,10 +51,10 @@ void index_select_add(const Tensor &select_indices,
                              Tensor &output,
                              const Tensor& /*offsets*/) {
   AT_ASSERT(select_indices.numel() == add_indices.numel());
-  auto add_indices_data = add_indices.data<int64_t>();
-  auto select_indices_data = select_indices.data<int64_t>();
-  auto src_data = src.data<T>();
-  auto output_data = output.data<T>();
+  auto add_indices_data = add_indices.data_ptr<int64_t>();
+  auto select_indices_data = select_indices.data_ptr<int64_t>();
+  auto src_data = src.data_ptr<T>();
+  auto output_data = output.data_ptr<T>();
   auto numel = add_indices.numel();
   int64_t ddim = src.size(1);
   auto src_stride0 = src.stride(0);
@@ -78,29 +76,19 @@ void index_select_add<float>(const Tensor &select_indices,
                              Tensor &output,
                              const Tensor& offsets) {
   int64_t ddim = src.size(1);
-  auto src_data = src.data<float>();
-  auto select_indices_data = select_indices.data<int64_t>();
-  auto output_data = output.data<float>();
+  auto src_data = src.data_ptr<float>();
+  auto select_indices_data = select_indices.data_ptr<int64_t>();
+  auto output_data = output.data_ptr<float>();
 
   if (isFastPathIndexSelect(src, output)) {
-    auto accessor = offsets.accessor<int64_t, 1>();
-    std::vector<int> lengths;
-
-    int64_t lower = accessor[0];
-    for (size_t i = 1; i < offsets.numel(); ++i) {
-      lengths.push_back(accessor[i] - lower);
-      lower = accessor[i];
-    }
-    lengths.push_back(select_indices.numel() - lower);
-
-    caffe2::EmbeddingLookup(
+    caffe2::EmbeddingLookupIdx(
       /*block_size=*/ddim,
-      /*output_size=*/lengths.size(),
+      /*output_size=*/offsets.numel(),
       /*index_size=*/select_indices.numel(),
       /*data_size=*/src.size(0),
       /*input=*/src_data,
       /*indices=*/select_indices_data,
-      /*lengths=*/lengths.data(),
+      /*offsets=*/offsets.data_ptr<int64_t>(),
       /*weights=*/nullptr,
       /*scale_bias=*/nullptr,
       /*normalize_by_lengths=*/false,
@@ -108,7 +96,7 @@ void index_select_add<float>(const Tensor &select_indices,
     );
   } else {
     AT_ASSERT(select_indices.numel() == add_indices.numel());
-    auto add_indices_data = add_indices.data<int64_t>();
+    auto add_indices_data = add_indices.data_ptr<int64_t>();
     auto src_stride0 = src.stride(0);
     auto src_stride1 = src.stride(1);
     auto output_stride0 = output.stride(0);
@@ -134,10 +122,10 @@ static void index_select_scale_add(const Tensor &select_indices,
                                    Tensor &output,
                                    const Tensor& /*offsets*/) {
   AT_ASSERT(select_indices.numel() == add_indices.numel());
-  auto add_indices_data = add_indices.data<int64_t>();
-  auto select_indices_data = select_indices.data<int64_t>();
-  auto src_data = src.data<T>();
-  auto output_data = output.data<T>();
+  auto add_indices_data = add_indices.data_ptr<int64_t>();
+  auto select_indices_data = select_indices.data_ptr<int64_t>();
+  auto src_data = src.data_ptr<T>();
+  auto output_data = output.data_ptr<T>();
   auto numel = add_indices.numel();
   int64_t ddim = src.size(1);
   auto src_stride0 = src.stride(0);
@@ -145,7 +133,7 @@ static void index_select_scale_add(const Tensor &select_indices,
   auto output_stride0 = output.stride(0);
   auto output_stride1 = output.stride(1);
 
-  auto* scale_data = scale.data<T>();
+  auto* scale_data = scale.data_ptr<T>();
   auto scale_stride = scale.stride(0);
 
   for (int64_t i = 0; i < numel; i++) {
@@ -166,30 +154,20 @@ void index_select_scale_add<float>(const Tensor &select_indices,
                                           Tensor &output,
                                           const Tensor& offsets) {
   int64_t ddim = src.size(1);
-  auto* scale_data = scale.data<float>();
-  auto select_indices_data = select_indices.data<int64_t>();
-  auto src_data = src.data<float>();
-  auto output_data = output.data<float>();
+  auto* scale_data = scale.data_ptr<float>();
+  auto select_indices_data = select_indices.data_ptr<int64_t>();
+  auto src_data = src.data_ptr<float>();
+  auto output_data = output.data_ptr<float>();
 
   if (isFastPathIndexSelectScale(src, scale, output)) {
-    auto accessor = offsets.accessor<int64_t, 1>();
-    std::vector<int> lengths;
-
-    int64_t lower = accessor[0];
-    for (size_t i = 1; i < offsets.numel(); ++i) {
-      lengths.push_back(accessor[i] - lower);
-      lower = accessor[i];
-    }
-    lengths.push_back(select_indices.numel() - lower);
-
-    caffe2::EmbeddingLookup(
+    caffe2::EmbeddingLookupIdx(
       /*block_size=*/ddim,
-      /*output_size=*/lengths.size(),
+      /*output_size=*/offsets.numel(),
       /*index_size=*/select_indices.numel(),
       /*data_size=*/src.size(0),
       /*input=*/src_data,
       /*indices=*/select_indices_data,
-      /*lengths=*/lengths.data(),
+      /*offsets=*/offsets.data_ptr<int64_t>(),
       /*weights=*/scale_data,
       /*scale_bias=*/nullptr,
       /*normalize_by_lengths=*/false,
@@ -197,7 +175,7 @@ void index_select_scale_add<float>(const Tensor &select_indices,
     );
   } else {
     AT_ASSERT(select_indices.numel() == add_indices.numel());
-    auto add_indices_data = add_indices.data<int64_t>();
+    auto add_indices_data = add_indices.data_ptr<int64_t>();
     auto src_stride0 = src.stride(0);
     auto src_stride1 = src.stride(1);
     auto output_stride0 = output.stride(0);
@@ -236,13 +214,13 @@ static Tensor apply_bag_size(const Tensor &offsets, const Tensor &indices,
                              const int64_t mode, Tensor &output,
                              const Tensor &bag_size) {
   if (mode == MODE_MEAN) {
+    // Avoid dividing by 0 for empty bags.
+    // Instead we want empty bags to return all 0s
     if (offsets.size(0) == 1) {
-      auto bag_size_ = indices.size(0);
+      auto bag_size_ = std::max(indices.size(0), static_cast<int64_t>(1));
       output /= bag_size_;
     } else {
-      // Avoid dividing by 0 for empty bags.
-      // Instead we want empty bags to return all 0s
-      auto bag_size_ = at::max(bag_size, at::ones_like(bag_size))
+      auto bag_size_ = at::max(bag_size, at::ones_like(bag_size, LEGACY_CONTIGUOUS_MEMORY_FORMAT))
                            .to(output.options())
                            .unsqueeze(1)
                            .expand_as(output);
@@ -284,14 +262,14 @@ std::tuple<Tensor, Tensor, Tensor, Tensor> embedding_bag_cpu_max(
 
     int64_t numel = indices.numel();
     int64_t dims = weight.size(1);
-    auto indices_data = indices.data<int64_t>();
-    auto offset2bag_data = offset2bag.data<int64_t>();
+    auto indices_data = indices.data_ptr<int64_t>();
+    auto offset2bag_data = offset2bag.data_ptr<int64_t>();
 
-    auto max_indices_data = max_indices.data<int64_t>();
+    auto max_indices_data = max_indices.data_ptr<int64_t>();
     auto max_indices_stride = max_indices.stride(0);
 
-    auto weight_data = weight.data<scalar_t>();
-    auto output_data = output.data<scalar_t>();
+    auto weight_data = weight.data_ptr<scalar_t>();
+    auto output_data = output.data_ptr<scalar_t>();
     auto weight_stride0 = weight.stride(0);
     auto weight_stride1 = weight.stride(1);
     auto output_stride = output.stride(0);
@@ -337,12 +315,12 @@ _embedding_bag_cpu(const Tensor &weight, const Tensor &indices,
   auto indices_arg = TensorArg(indices, "indices", 1);
   checkScalarType("embedding_bag", indices_arg, kLong);
   auto offsets_arg = TensorArg(offsets, "offsets", 1);
-  checkScalarType("embedding_bag", indices_arg, kLong);
+  checkScalarType("embedding_bag", offsets_arg, kLong);
   auto weight_arg = TensorArg(weight, "weight", 1);
   checkScalarTypes("embedding_bag", weight_arg, {kFloat, kDouble});
 
   if (per_sample_weights.defined()) {
-    AT_CHECK(mode == MODE_SUM,
+    TORCH_CHECK(mode == MODE_SUM,
         "embedding_bag: per_sample_weights only supported with mode='sum'");
     auto per_input_weights_arg = TensorArg(
         per_sample_weights,"per_sample_weights", 1);
@@ -533,21 +511,21 @@ void _embedding_bag_dense_backward_cpu_sum_mean(
   optional<int64_t> per_sample_weights_stride;
   if (per_sample_weights_.defined()) {
     per_sample_weights = per_sample_weights_.index_select(0, ind_sort);
-    per_sample_weights_data = per_sample_weights->data<scalar_t>();
+    per_sample_weights_data = per_sample_weights->data_ptr<scalar_t>();
     per_sample_weights_stride = per_sample_weights->stride(0);
   }
 
-  auto indices_data = indices.data<int64_t>();
-  auto offsets_data = offsets_.data<int64_t>();
-  auto offset2bag_data = offset2bag.data<int64_t>();
+  auto indices_data = indices.data_ptr<int64_t>();
+  auto offsets_data = offsets_.data_ptr<int64_t>();
+  auto offset2bag_data = offset2bag.data_ptr<int64_t>();
   int64_t numel = indices.numel();
 
   auto counts = compute_counts(num_weights, indices_data, numel);
   auto next_unique_index_idx =
       compute_counts_uniq(num_weights, indices_data, numel, counts);
 
-  #pragma omp parallel for if (numel > 1000)
-    for (int64_t i = 0; i < (int64_t)next_unique_index_idx.size(); i++) {
+  auto loop = [&](int64_t start, int64_t end) {
+    for (int64_t i = start; i < end; i++) {
       int64_t start = i == 0 ? 0 : next_unique_index_idx[i - 1];
       int64_t index = indices_data[start];
       for (int64_t j = start; j < next_unique_index_idx[i]; j++) {
@@ -573,12 +551,18 @@ void _embedding_bag_dense_backward_cpu_sum_mean(
           }
         }
         int64_t ddim = grad.size(1);
-        auto igwd = index_grad_weight.data<scalar_t>();
-        auto gd = grad.data<scalar_t>();
+        auto igwd = index_grad_weight.data_ptr<scalar_t>();
+        auto gd = grad.data_ptr<scalar_t>();
         THBlas_axpy<scalar_t>(ddim, (scalar_t)scale, gd + ddim * source, 1,
                     igwd + ddim * index, 1);
       }
     }
+  };
+  if (numel > 1000) {
+    at::parallel_for(0, (int64_t)next_unique_index_idx.size(), 0, loop);
+  } else {
+    loop(0, (int64_t)next_unique_index_idx.size());
+  }
 }
 
 Tensor _embedding_bag_dense_backward_cpu(const Tensor &grad_, const Tensor &indices_,
@@ -621,11 +605,11 @@ Tensor _embedding_bag_per_sample_weights_backward_cpu_template(
     const Tensor& offsets,
     const Tensor& offset2bag,
     int64_t mode) {
-  AT_CHECK(
+  TORCH_CHECK(
       mode == MODE_SUM,
       "embedding_bag_backward: per_sample_weights only supported for mode='sum'");
 
-  AT_ASSERT(grad.dim() == 2)
+  AT_ASSERT(grad.dim() == 2);
   auto embedding_features = grad.size(1);
 
   AT_ASSERT(indices.dim() == 1);
@@ -655,19 +639,19 @@ Tensor _embedding_bag_per_sample_weights_backward_cpu_template(
     offset2bag_ = offset2bag;
   }
 
-  auto grad_data = grad.data<scalar_t>();
+  auto grad_data = grad.data_ptr<scalar_t>();
   auto grad_stride0 = grad.stride(0);
   auto grad_stride1 = grad.stride(1);
 
-  auto weight_data = weight.data<scalar_t>();
+  auto weight_data = weight.data_ptr<scalar_t>();
   auto weight_stride0 = weight.stride(0);
   auto weight_stride1 = weight.stride(1);
 
-  auto indices_data = indices.data<int64_t>();
+  auto indices_data = indices.data_ptr<int64_t>();
 
   // The following are contiguous
-  auto output_data = output.data<scalar_t>();
-  auto offset2bag_data = offset2bag_.data<int64_t>();
+  auto output_data = output.data_ptr<scalar_t>();
+  auto offset2bag_data = offset2bag_.data_ptr<int64_t>();
 
   // XXX: 64 was arbitrarily chosen. There is probably a sweet spot for this number.
   parallel_for(0, num_samples, 64, [&](int64_t begin, int64_t end) {

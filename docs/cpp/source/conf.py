@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # PyTorch documentation build configuration file, created by
@@ -120,7 +119,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'PyTorch'
-copyright = '2018, Torch Contributors'
+copyright = '2019, Torch Contributors'
 author = 'Torch Contributors'
 
 # The version info for the project you're documenting, acts as replacement for

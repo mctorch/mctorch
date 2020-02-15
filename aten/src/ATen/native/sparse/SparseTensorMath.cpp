@@ -1,4 +1,7 @@
+#include <ATen/native/sparse/SparseTensorMath.h>
+
 #include <ATen/ATen.h>
+#include <ATen/Parallel.h>
 #include <ATen/SparseTensorImpl.h>
 #include <ATen/ExpandUtils.h>
 #include <ATen/NativeFunctions.h>
@@ -17,21 +20,22 @@ using namespace at::sparse;
 
 namespace {
   LongTensor _to_csr(const int64_t* indices, int64_t dim, int64_t nnz) {
-    int64_t h, i, hp0, hp1;
     LongTensor csr = native::zeros({dim + 1}, kLong);
 
     // TODO: eliminate this conditional when zero-size dims supported correctly
     if (nnz > 0) {
       auto csr_accessor = csr.accessor<int64_t, 1>();
       // Convert the sparse matrix to CSR format
-#pragma omp parallel for private(i, h, hp0, hp1) schedule(static) if (nnz > 10000)
-      for (i=0; i<nnz; i++) {
-        hp0 = indices[i];
-        hp1 = (i+1 == nnz) ?  dim : indices[i+1];
-        if (hp0 != hp1) for (h = hp0; h < hp1; h++) {
-          csr_accessor[h+1] = i+1;
+      at::parallel_for(0, nnz, 10000, [&](int64_t start, int64_t end) {
+        int64_t h, hp0, hp1;
+        for (auto i = start; i < end; i++) {
+          hp0 = indices[i];
+          hp1 = (i+1 == nnz) ?  dim : indices[i+1];
+          if (hp0 != hp1) for (h = hp0; h < hp1; h++) {
+            csr_accessor[h+1] = i+1;
+          }
         }
-      }
+      });
     }
     return csr;
   }
@@ -97,7 +101,7 @@ SparseTensor& log1p_out_sparse(SparseTensor& r, const SparseTensor& t) {
 
   if (is_same_tensor(r, t)) {
     // don't have in-place log1p for uncoalesced input because coalesce() is not in-place
-    AT_CHECK(
+    TORCH_CHECK(
       r.is_coalesced(), "log1p: in-place on uncoalesced tensors is not supported yet!");
   }
   else {
@@ -108,7 +112,7 @@ SparseTensor& log1p_out_sparse(SparseTensor& r, const SparseTensor& t) {
 }
 
 SparseTensor& log1p_sparse_(SparseTensor& t) {
-  AT_CHECK(t.is_coalesced(), "log1p: in-place on uncoalesced tensors is not supported yet!");
+  TORCH_CHECK(t.is_coalesced(), "log1p: in-place on uncoalesced tensors is not supported yet!");
   return log1p_out_sparse(t, t);
 }
 
@@ -121,7 +125,7 @@ SparseTensor& log1p_sparse_(SparseTensor& t) {
 SparseTensor& pow_out_sparse_scalar(SparseTensor& r, const SparseTensor& t_, Scalar value) {
   AT_ASSERT(r.is_sparse());
   AT_ASSERT(t_.is_sparse());
-  AT_CHECK(value.toDouble() != 0, "pow: cannot raise to zeroth power on sparse tensor; it would make the result tensor dense");
+  TORCH_CHECK(value.toDouble() != 0, "pow: cannot raise to zeroth power on sparse tensor; it would make the result tensor dense");
 
   // This coalesce is why we can't easily provide an inplace variant
   SparseTensor t = t_.coalesce();
@@ -146,10 +150,24 @@ SparseTensor pow_sparse_scalar(const SparseTensor& t, Scalar value) {
 // div(SparseTensor, Scalar)
 // --------------------------------------------------------------------
 
+SparseTensor& div_out_sparse_zerodim(SparseTensor& r, const SparseTensor& t, const Tensor& value);
+
+Tensor div_sparse(const Tensor& self, const Tensor& value) {
+  Tensor result = at::empty({0}, self.options());
+  return div_out_sparse_zerodim(result, self, value);
+}
+
+Tensor& div_sparse_(Tensor& self, const Tensor& value) {
+  return div_out_sparse_zerodim(self, self, value);
+}
+
 SparseTensor& div_out_sparse_zerodim(SparseTensor& r, const SparseTensor& t, const Tensor& value) {
+  TORCH_CHECK(value.dim() == 0, "sparse division only supports division by a scalar (got shape ",
+      value.sizes(), " for argument 'other')");
+  TORCH_CHECK(!value.is_sparse(), "A Sparse Tensor can only be divided by a scalar or zero-dim dense tensor");
+
   AT_ASSERT(r.is_sparse());
   AT_ASSERT(t.is_sparse());
-  AT_ASSERT(value.dim() == 0);
 
   if (is_same_tensor(r, t)) {
     r._values().div_(value);
@@ -185,14 +203,45 @@ Tensor norm_sparse(const SparseTensor& self, Scalar value) {
 // add(SparseTensor, SparseTensor, Scalar)  [broadcasts]
 // --------------------------------------------------------------------
 
-SparseTensor& add_out_sparse_cpu(SparseTensor& r, const SparseTensor& t, const SparseTensor& src, Scalar value) {
-  AT_ASSERT(r.is_sparse());
-  AT_ASSERT(t.is_sparse());
-  AT_ASSERT(!t.is_cuda());  // the dispatch argument
-  AT_CHECK(!r.is_cuda(), "add: expected 'out' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!src.is_cuda(), "add: expected 'other' to be a CPU tensor, but got a CUDA tensor");
+Tensor add_sparse(const Tensor& self, const Tensor& other, Scalar alpha) {
+  // TODO: Why?! Can't we just flip the order here...
+  TORCH_CHECK(!(self.is_sparse() && !other.is_sparse()),
+              "add(sparse, dense) is not supported. Use add(dense, sparse) instead.");
+  Tensor result = at::empty({0}, self.options());
+  return at::add_out(result, self, other, alpha);  // redispatch!
+}
 
-  AT_CHECK(t.sizes().equals(src.sizes()), "add: expected sizes of 'self' and 'other' to match, but ", t.sizes(), " != ", src.sizes());
+Tensor& add_sparse_(Tensor& self, const Tensor& other, Scalar alpha) {
+  return at::add_out(self, self, other, alpha);  // redispatch!
+}
+
+// There's actually nothing sparse specific about these implementations
+
+Tensor sub_sparse(const Tensor& self, const Tensor& other, Scalar alpha) {
+  return native::add_sparse(self, other, -alpha);
+}
+
+Tensor& sub_sparse_(Tensor& self, const Tensor& other, Scalar alpha) {
+  return native::add_sparse_(self, other, -alpha);
+}
+
+Tensor& sub_out_sparse(Tensor& r, const Tensor& self, const Tensor& other, Scalar alpha) {
+  return at::add_out(r, self, other, -alpha);  // redispatch!
+}
+
+Tensor& add_out_dense_sparse_cpu(Tensor& r, const Tensor& dense, const SparseTensor& sparse_, Scalar value);
+
+SparseTensor& add_out_sparse_cpu(SparseTensor& r, const SparseTensor& t, const SparseTensor& src, Scalar value) {
+  if (!t.is_sparse()) {
+    return add_out_dense_sparse_cpu(r, t, src, value);
+  }
+  // TODO: This test seems a bit goofy
+  TORCH_CHECK(src.is_sparse(), "add(sparse, dense) is not supported. Use add(dense, sparse) instead.");
+  AT_ASSERT(!t.is_cuda());  // the dispatch argument
+  TORCH_CHECK(!r.is_cuda(), "add: expected 'out' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!src.is_cuda(), "add: expected 'other' to be a CPU tensor, but got a CUDA tensor");
+
+  TORCH_CHECK(t.sizes().equals(src.sizes()), "add: expected sizes of 'self' and 'other' to match, but ", t.sizes(), " != ", src.sizes());
 
   if (src._nnz() == 0) {
     return copy_sparse_to_sparse_(r, t);
@@ -201,7 +250,7 @@ SparseTensor& add_out_sparse_cpu(SparseTensor& r, const SparseTensor& t, const S
     return mul_out_sparse_scalar(r, src, value);
   }
 
-  AT_CHECK(is_same_density(t, src), "add: expected 'self' and 'other' to have same density, but 'self' has ", t.sparse_dim(), " sparse dimensions while 'other' has ", src.sparse_dim(), " sparse dimensions");
+  TORCH_CHECK(is_same_density(t, src), "add: expected 'self' and 'other' to have same density, but 'self' has ", t.sparse_dim(), " sparse dimensions while 'other' has ", src.sparse_dim(), " sparse dimensions");
 
   // saving those because they can be overwritten when doing in-place operations
   int64_t t_nnz = t._nnz(), s_nnz = src._nnz(), max_nnz = t_nnz + s_nnz;
@@ -229,9 +278,9 @@ SparseTensor& add_out_sparse_cpu(SparseTensor& r, const SparseTensor& t, const S
 
     AT_DISPATCH_ALL_TYPES(
         t_values.scalar_type(), "cadd_sparse", [&] {
-          scalar_t* t_values_ptr = t_values.data<scalar_t>();
-          scalar_t* s_values_ptr = s_values.data<scalar_t>();
-          scalar_t* r_values_ptr = r_values.data<scalar_t>();
+          scalar_t* t_values_ptr = t_values.data_ptr<scalar_t>();
+          scalar_t* s_values_ptr = s_values.data_ptr<scalar_t>();
+          scalar_t* r_values_ptr = r_values.data_ptr<scalar_t>();
           scalar_t cast_value = value.to<scalar_t>();
           while (t_i < t_nnz || s_i < s_nnz) {
             if (t_i >= t_nnz) {
@@ -309,36 +358,33 @@ SparseTensor& add_out_sparse_cpu(SparseTensor& r, const SparseTensor& t, const S
 
 template <typename scalar_t>
 void add_dense_sparse_worker_cpu(Tensor& r, Scalar value, const SparseTensor& sparse, const Tensor& indices, const Tensor& values) {
-  int64_t k;
-
   auto indices_accessor = indices.accessor<int64_t, 2>();
   auto values_accessor = values.accessor<scalar_t, 1>();
 
-  scalar_t* r_ptr = r.data<scalar_t>();
+  scalar_t* r_ptr = r.data_ptr<scalar_t>();
   scalar_t cast_value = value.to<scalar_t>();
 
-  #pragma omp parallel for private(k)
-  for (k = 0; k < sparse._nnz(); k++) {
-    int64_t index = r.storage_offset();
-    for (int64_t d = 0; d < sparse.sparse_dim(); d++) {
-      index += r.stride(d) * indices_accessor[d][k];
+  at::parallel_for(0, sparse._nnz(), 0, [&](int64_t start, int64_t end) {
+    for (auto k = start; k < end; k++) {
+      int64_t index = r.storage_offset();
+      for (int64_t d = 0; d < sparse.sparse_dim(); d++) {
+        index += r.stride(d) * indices_accessor[d][k];
+      }
+      r_ptr[index] += cast_value * values_accessor[k];
     }
-    r_ptr[index] += cast_value * values_accessor[k];
-  }
+  });
 }
 
-Tensor& add_out_dense_sparse_cpu(Tensor& r, const Tensor& dense, SparseTensorRef sparse__, Scalar value) {
-  const SparseTensor& sparse_ = sparse__.tref;
-
+Tensor& add_out_dense_sparse_cpu(Tensor& r, const Tensor& dense, const SparseTensor& sparse_, Scalar value) {
   AT_ASSERT(!r.is_sparse());
   AT_ASSERT(!dense.is_sparse());
   AT_ASSERT(sparse_.is_sparse());
 
   AT_ASSERT(!dense.is_cuda()); // dispatch argument
-  AT_CHECK(!r.is_cuda(), "add: expected 'out' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!sparse_.is_cuda(), "add: expected 'other' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!r.is_cuda(), "add: expected 'out' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!sparse_.is_cuda(), "add: expected 'other' to be a CPU tensor, but got a CUDA tensor");
 
-  AT_CHECK(dense.sizes().equals(sparse_.sizes()), "add: expected 'self' and 'other' to have same size, but self has size ",
+  TORCH_CHECK(dense.sizes().equals(sparse_.sizes()), "add: expected 'self' and 'other' to have same size, but self has size ",
     dense.sizes(), " while other has size ", sparse_.sizes(), " (FYI: dense-sparse addition does not currently support broadcasting)");
 
   r.resize_as_(dense);
@@ -376,6 +422,15 @@ Tensor& add_out_dense_sparse_cpu(Tensor& r, const Tensor& dense, SparseTensorRef
 // mul(SparseTensor, SparseTensor)  [broadcasts]
 // --------------------------------------------------------------------
 
+Tensor mul_sparse(const Tensor& self, const Tensor& other) {
+  Tensor result = at::empty({0}, self.options());
+  return at::mul_out(result, self, other);  // redispatch!
+}
+
+Tensor& mul_sparse_(Tensor& self, const Tensor& other) {
+  return at::mul_out(self, self, other);  // redispatch!
+}
+
 SparseTensor& mul_out_sparse_cpu(SparseTensor& r, const Tensor& t_, const Tensor& src_) {
   if (src_.dim() == 0) {
     return mul_out_sparse_zerodim(r, t_, src_);
@@ -383,12 +438,12 @@ SparseTensor& mul_out_sparse_cpu(SparseTensor& r, const Tensor& t_, const Tensor
     return mul_out_sparse_zerodim(r, src_, t_);
   }
 
-  AT_CHECK(t_.sizes().equals(src_.sizes()), "mul operands have incompatible sizes");
+  TORCH_CHECK(t_.sizes().equals(src_.sizes()), "mul operands have incompatible sizes");
   AT_ASSERT(!t_.is_cuda()); // dispatch argument
-  AT_CHECK(!r.is_cuda(), "mul: expected 'out' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!src_.is_cuda(), "mul: expected 'other' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!r.is_cuda(), "mul: expected 'out' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!src_.is_cuda(), "mul: expected 'other' to be a CPU tensor, but got a CUDA tensor");
 
-  AT_CHECK(t_.sizes().equals(src_.sizes()), "mul: expected 'self' and 'other' to have same sizes, but ", t_.sizes(), " != ", src_.sizes());
+  TORCH_CHECK(t_.sizes().equals(src_.sizes()), "mul: expected 'self' and 'other' to have same sizes, but ", t_.sizes(), " != ", src_.sizes());
 
   if (src_._nnz() == 0 || t_._nnz() == 0) {
     r.resize_as_(src_);
@@ -479,7 +534,6 @@ SparseTensor& mul_out_sparse_cpu(SparseTensor& r, const Tensor& t_, const Tensor
 // D = beta * D1 + alpha * mm(S, D2)
 // --------------------------------------------------------------------
 
-// NB: OMP pragmas have to get their own functions; can't put them in lambdas
 template <typename scalar_t>
 void s_addmm_out_sparse_dense_worker(int64_t nnz, int64_t dim_i, int64_t dim_j, int64_t dim_k, Tensor& r, Scalar beta, const Tensor& t, Scalar alpha, const Tensor& indices, const Tensor& values, const Tensor& dense) {
   int64_t i;
@@ -500,8 +554,8 @@ void s_addmm_out_sparse_dense_worker(int64_t nnz, int64_t dim_i, int64_t dim_j, 
   auto indices_accessor = indices.accessor<int64_t, 2>();
 
   auto values_accessor = values.accessor<scalar_t, 1>();
-  scalar_t* dense_ptr = dense.data<scalar_t>();
-  scalar_t* r_ptr = r.data<scalar_t>();
+  scalar_t* dense_ptr = dense.data_ptr<scalar_t>();
+  scalar_t* r_ptr = r.data_ptr<scalar_t>();
 
   int64_t dense_stride0 = dense.stride(0);
   int64_t dense_stride1 = dense.stride(1);
@@ -536,24 +590,24 @@ Tensor& s_addmm_out_sparse_dense_cpu(
 ) {
   // TODO: This error message seems awfully opaque
   AT_ASSERT(!t.is_cuda());
-  AT_CHECK(!r.is_cuda(), "addmm: expected 'out' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!sparse_.is_cuda(), "addmm: expected 'mat1' to be a CPU tensor, but got a CUDA tensor");
-  AT_CHECK(!dense.is_cuda(), "addmm: expected 'mat2' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!r.is_cuda(), "addmm: expected 'out' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!sparse_.is_cuda(), "addmm: expected 'mat1' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!dense.is_cuda(), "addmm: expected 'mat2' to be a CPU tensor, but got a CUDA tensor");
 
-  AT_CHECK(sparse_.sparse_dim() == 2, "addmm: matrices expected, got ", sparse_.sparse_dim(), "D tensor");
-  AT_CHECK(sparse_.dense_dim() == 0, "addmm: scalar values expected, got ", sparse_.dense_dim(), "D values");
-  AT_CHECK(dense.dim() == 2, "addmm: matrices expected, got ", dense.dim(), "D tensor");
+  TORCH_CHECK(sparse_.sparse_dim() == 2, "addmm: matrices expected, got ", sparse_.sparse_dim(), "D tensor");
+  TORCH_CHECK(sparse_.dense_dim() == 0, "addmm: scalar values expected, got ", sparse_.dense_dim(), "D values");
+  TORCH_CHECK(dense.dim() == 2, "addmm: matrices expected, got ", dense.dim(), "D tensor");
 
   // ixj * jxk = ixk
   int64_t dim_i = sparse_.size(0);
   int64_t dim_j = sparse_.size(1);
   int64_t dim_k = dense.size(1);
 
-  AT_CHECK(dense.size(0) == dim_j,
+  TORCH_CHECK(dense.size(0) == dim_j,
       "addmm: Argument #3 (dense): Expected dim 0 size ", dim_j, ", got ", dense.size(0));
-  AT_CHECK(t.size(0) == dim_i,
+  TORCH_CHECK(t.size(0) == dim_i,
       "addmm: Argument #1 (t): Expected dim 0 size ", dim_i, ", got ", t.size(0));
-  AT_CHECK(t.size(1) == dim_k,
+  TORCH_CHECK(t.size(1) == dim_k,
       "addmm: Argument #1 (t): Expected dim 1 size ", dim_k, ", got ", t.size(1));
 
   r.resize_({dim_i, dim_k});
@@ -578,6 +632,19 @@ Tensor& s_addmm_out_sparse_dense_cpu(
 
 }
 
+Tensor& addmm_out_sparse_dense_cpu(
+    Tensor& result,
+    const Tensor& self,
+    const SparseTensor& mat1,
+    const Tensor& mat2,
+    Scalar beta,
+    Scalar alpha
+) {
+  Tensor b_self;
+  std::tie(b_self) = expand_size(self, {mat1.size(0), mat2.size(1)}, "addmm_out");
+  return s_addmm_out_sparse_dense_cpu(result, b_self, mat1, mat2, beta, alpha);
+}
+
 Tensor s_addmm_sparse_dense_cpu(
     const Tensor& t,
     const SparseTensor& sparse,
@@ -590,6 +657,18 @@ Tensor s_addmm_sparse_dense_cpu(
   return r;
 }
 
+Tensor addmm_sparse_dense_cpu(
+    const Tensor& self,
+    const SparseTensor& mat1,
+    const Tensor& mat2,
+    Scalar beta,
+    Scalar alpha
+) {
+  Tensor b_self;
+  std::tie(b_self) = expand_size(self, {mat1.size(0), mat2.size(1)}, "addmm_out");
+  return s_addmm_sparse_dense_cpu(b_self, mat1, mat2, beta, alpha);
+}
+
 Tensor& s_addmm_sparse_dense_cpu_(
     Tensor& t,
     const SparseTensor& sparse,
@@ -600,6 +679,8 @@ Tensor& s_addmm_sparse_dense_cpu_(
   return s_addmm_out_sparse_dense_cpu(t, t, sparse, dense, beta, alpha);
 }
 
+// NB: Purposely no broadcasting version of addmm inplace
+
 Tensor _sparse_addmm(
   const Tensor& t,
   const SparseTensor& sparse,
@@ -607,9 +688,10 @@ Tensor _sparse_addmm(
   Scalar beta,
   Scalar alpha
 ) {
-  Tensor b_t;
-  std::tie(b_t) = expand_size(t, {sparse.size(0), dense.size(1)}, "addmm");
-  return at::s_native_addmm(b_t, sparse, dense, beta, alpha);
+  // _sparse_addmm forward is functionally equivalent to addmm; it's
+  // just the backward that is different.  This technically does an
+  // unnecessary redispatch, I was too lazy to make it not do that
+  return at::addmm(t, sparse, dense, beta, alpha);
 }
 
 Tensor _sparse_mm(
@@ -617,7 +699,19 @@ Tensor _sparse_mm(
   const Tensor& dense
 ) {
   Tensor t = at::zeros({}, dense.options());
-  return at::_sparse_addmm(t, sparse, dense, 0, 1);
+  return at::_sparse_addmm(t, sparse, dense, 0, 1);  // redispatch!
+}
+
+// NB: Despite its suggestive name, this actually only exists so that
+// we can redispatch to addmm_out; this is NOT an implementation of
+// the sparse masking version of mm
+SparseTensor& _sparse_mm_out(
+  SparseTensor& result,
+  const SparseTensor& sparse,
+  const Tensor& dense
+) {
+  Tensor t = at::zeros({}, dense.options());
+  return at::addmm_out(result, t, sparse, dense, 0, 1);  // redispatch!
 }
 
 // --------------------------------------------------------------------
@@ -629,21 +723,21 @@ SparseTensor& hspmm_out_sparse_cpu(SparseTensor& r, const SparseTensor& sparse_,
   Scalar alpha = 1;
 
   AT_ASSERT(!sparse_.is_cuda()); // dispatch argument
-  AT_CHECK(!r.is_cuda(), "hspmm: expected 'out' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!dense.is_cuda(), "hspmm: expected 'other' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!r.is_cuda(), "hspmm: expected 'out' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!dense.is_cuda(), "hspmm: expected 'other' to be a CPU tensor, but got a CUDA tensor");
 
-  AT_CHECK(sparse_.sparse_dim() == 2,
+  TORCH_CHECK(sparse_.sparse_dim() == 2,
       "hspmm: Argument #2: matrices expected, got ", sparse_.sparse_dim(), "D tensor");
-  AT_CHECK(sparse_.dense_dim() == 0,
+  TORCH_CHECK(sparse_.dense_dim() == 0,
       "hspmm: Argument #2: scalar values expected, got ", sparse_.dense_dim(), "D values");
-  AT_CHECK(dense.dim() == 2,
+  TORCH_CHECK(dense.dim() == 2,
       "hspmm: Argument #3: matrices expected, got ", dense.dim(), "D tensor");
 
   int64_t m = sparse_.size(0);
   int64_t k = sparse_.size(1);
   int64_t n = dense.size(1);
 
-  AT_CHECK(dense.size(0) == k,
+  TORCH_CHECK(dense.size(0) == k,
       "hspmm: Argument #3: Expected dim 0 size ", k, ", got ", dense.size(0));
 
   get_sparse_impl(r)->raw_resize_(1, 1, {m, n});
@@ -714,15 +808,15 @@ SparseTensor& _sspaddmm_out_cpu(
     Scalar alpha
 ) {
   AT_ASSERT(!t.is_cuda()); // dispatch argument
-  AT_CHECK(!r.is_cuda(), "sspaddmm: expected 'out' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!sparse_.is_cuda(), "sspaddmm: expected 'mat1' to be a CPU tensor, but got a CUDA tensor");
-  AT_CHECK(!dense.is_cuda(), "sspaddmm: expected 'mat2' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!r.is_cuda(), "sspaddmm: expected 'out' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!sparse_.is_cuda(), "sspaddmm: expected 'mat1' to be a CPU tensor, but got a CUDA tensor");
+  TORCH_CHECK(!dense.is_cuda(), "sspaddmm: expected 'mat2' to be a CPU tensor, but got a CUDA tensor");
 
-  AT_CHECK(sparse_.sparse_dim() == 2,
+  TORCH_CHECK(sparse_.sparse_dim() == 2,
       "sspaddmm: Argument #2: matrices expected, got ", sparse_.sparse_dim(), "D tensor");
-  AT_CHECK(sparse_.dense_dim() == 0,
+  TORCH_CHECK(sparse_.dense_dim() == 0,
       "sspaddmm: Argument #2: scalar values expected, got ", sparse_.dense_dim(), "D values");
-  AT_CHECK(dense.dim() == 2,
+  TORCH_CHECK(dense.dim() == 2,
       "sspaddmm: Argument #2: matrices expected, got ", dense.dim(), "D tensor");
 
   SparseTensor sparse = sparse_.coalesce();
@@ -736,18 +830,18 @@ SparseTensor& _sspaddmm_out_cpu(
   // See test_saddmm
   get_sparse_impl(r)->raw_resize_(2, 0, {dim_i, dim_k});
 
-  AT_CHECK(dense.size(0) == dim_j,
+  TORCH_CHECK(dense.size(0) == dim_j,
       "sspaddmm: Argument #3: Expected dim 0 size ", dim_j, ", got ", dense.size(0));
-  AT_CHECK(t.size(0) == dim_i,
+  TORCH_CHECK(t.size(0) == dim_i,
       "sspaddmm: Argument #1: Expected dim 0 size ", dim_i, ", got ", t.size(0));
-  AT_CHECK(t.size(1) == dim_k,
+  TORCH_CHECK(t.size(1) == dim_k,
       "sspaddmm: Argument #1: Expected dim 1 size ", dim_k, ", got ", t.size(1));
 
   int64_t nnz        = sparse._nnz();
   LongTensor indices = sparse._indices();
   Tensor values      = sparse._values();
 
-  LongTensor csr = _to_csr(indices.data<int64_t>(), dim_i, nnz);
+  LongTensor csr = _to_csr(indices.data_ptr<int64_t>(), dim_i, nnz);
 
   int64_t t_nnz = t._nnz();
   int64_t r_nnz = nnz * dim_k + t_nnz;
@@ -777,8 +871,8 @@ SparseTensor& _sspaddmm_out_cpu(
   AT_DISPATCH_ALL_TYPES(
       values.scalar_type(), "sspmm", [&] {
         auto values_accessor = values.accessor<scalar_t, 1>();
-        scalar_t* dense_ptr = dense.data<scalar_t>();
-        scalar_t* newv_ptr = newv.data<scalar_t>();
+        scalar_t* dense_ptr = dense.data_ptr<scalar_t>();
+        scalar_t* newv_ptr = newv.data_ptr<scalar_t>();
         scalar_t cast_alpha = alpha.to<scalar_t>();
 
         for (int64_t h = 0; h < dim_i; h++) {
@@ -858,7 +952,7 @@ Tensor _sparse_sum(const SparseTensor& input, IntArrayRef dims_to_sum, ScalarTyp
 }
 
 Tensor _sparse_sum(const SparseTensor& input, IntArrayRef dims_to_sum) {
-  AT_CHECK(input._nnz() > 0, "_sparse_sum: sparse tensor input._nnz() == 0, please call torch.sparse.sum(input) instead.")
+  TORCH_CHECK(input._nnz() > 0, "_sparse_sum: sparse tensor input._nnz() == 0, please call torch.sparse.sum(input) instead.")
 
   const int64_t input_dim = input.dim();
   auto dims_to_sum_b = dim_list_to_bitset(dims_to_sum, input_dim);
@@ -869,7 +963,7 @@ Tensor _sparse_sum(const SparseTensor& input, IntArrayRef dims_to_sum) {
   Tensor values = input._values();
   IntArrayRef sizes = input.sizes();
   const int64_t sparse_dim = input.sparse_dim();
-  const int64_t dense_dim = input.dense_dim();
+  // const int64_t dense_dim = input.dense_dim();
 
   auto dims_to_keep_v = std::vector<int64_t>();
   auto dense_dims_to_sum_v = std::vector<int64_t>();
@@ -891,7 +985,7 @@ Tensor _sparse_sum(const SparseTensor& input, IntArrayRef dims_to_sum) {
     new_values = values.sum(dense_dims_to_sum_v);
   }
   else {
-    new_values = values.clone();
+    new_values = values.clone(at::MemoryFormat::Contiguous);
   }
 
   if (sum_all_sparse_dim) {
@@ -903,7 +997,7 @@ Tensor _sparse_sum(const SparseTensor& input, IntArrayRef dims_to_sum) {
     // new indices
     LongTensor new_indices;
     if (sparse_dims_to_sum_size == 0) {
-      new_indices = indices.clone();
+      new_indices = indices.clone(at::MemoryFormat::Contiguous);
     }
     else {
       new_indices = at::empty({sparse_dim - sparse_dims_to_sum_size, input._nnz()}, indices.options());
@@ -975,8 +1069,8 @@ Tensor _sparse_sum(const SparseTensor& input, IntArrayRef dims_to_sum) {
 // - grad.values might have zeros
 // --------------------------------------------------------------------
 Tensor _sparse_sum_backward_cpu(const Tensor& grad_, const SparseTensor& input_, IntArrayRef dims_to_sum) {
-  AT_CHECK(!grad_.is_cuda(), "_sparse_sum_backward_cpu: expected 'grad_' to be CPU tensor, but got CUDA tensor");
-  AT_CHECK(!input_.is_cuda(), "_sparse_sum_backward_cpu: expected 'input_' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!grad_.is_cuda(), "_sparse_sum_backward_cpu: expected 'grad_' to be CPU tensor, but got CUDA tensor");
+  TORCH_CHECK(!input_.is_cuda(), "_sparse_sum_backward_cpu: expected 'input_' to be CPU tensor, but got CUDA tensor");
 
   auto input = input_.coalesce();
   const int64_t input_dim = input.dim();
@@ -1009,7 +1103,7 @@ Tensor _sparse_sum_backward_cpu(const Tensor& grad_, const SparseTensor& input_,
   const bool sum_sparse_dim = (sparse_dims_to_sum_size > 0);
 
   if (sum_all_sparse_dim) {
-    AT_CHECK(!grad_.is_sparse(), "_sparse_sum_backward_cpu: expected grad_ Tensor to be dense since all sparse dims are summed");
+    TORCH_CHECK(!grad_.is_sparse(), "_sparse_sum_backward_cpu: expected grad_ Tensor to be dense since all sparse dims are summed");
     auto grad_input_values = grad_;
     auto expand_size = input_values.sizes().vec();
     if (sum_dense_dim) {
@@ -1019,11 +1113,11 @@ Tensor _sparse_sum_backward_cpu(const Tensor& grad_, const SparseTensor& input_,
       for (auto d : dense_dims_to_sum_v) grad_input_values = grad_input_values.unsqueeze(d - 1);  // -1 since grad has no nnz dim
       grad_input_values = grad_input_values.expand(dense_expand_size);
     }
-    grad_input_values = grad_input_values.expand(expand_size).clone();
-    return at::_sparse_coo_tensor_with_dims_and_tensors(input_sparse_dim, input_dense_dim, input_sizes, input_indices.clone(), grad_input_values, input.options().dtype(grad_.dtype())); // convert to grad dtype
+    grad_input_values = grad_input_values.expand(expand_size).clone(at::MemoryFormat::Contiguous);
+    return at::_sparse_coo_tensor_with_dims_and_tensors(input_sparse_dim, input_dense_dim, input_sizes, input_indices.clone(at::MemoryFormat::Contiguous), grad_input_values, input.options().dtype(grad_.dtype())); // convert to grad dtype
   }
   else {
-    AT_CHECK(grad_.is_sparse(), "_sparse_sum_backward_cpu: expected grad_ Tensor to be sparse, but got dense");
+    TORCH_CHECK(grad_.is_sparse(), "_sparse_sum_backward_cpu: expected grad_ Tensor to be sparse, but got dense");
     auto grad = grad_.coalesce();
     LongTensor grad_indices = grad._indices();
     Tensor grad_values = grad._values();
@@ -1035,13 +1129,13 @@ Tensor _sparse_sum_backward_cpu(const Tensor& grad_, const SparseTensor& input_,
       auto expand_size = input_values.sizes().vec();
       if (sum_sparse_dim) expand_size[0] = grad_values.size(0);
       for (auto d : dense_dims_to_sum_v) grad_values_expand = grad_values_expand.unsqueeze(d);
-      grad_values_expand = grad_values_expand.expand(expand_size).clone();
+      grad_values_expand = grad_values_expand.expand(expand_size).clone(at::MemoryFormat::Contiguous);
     }
 
     Tensor grad_input_values;
     if (sum_sparse_dim) {
       // see NOTE [ sparse.sum() backward ]
-      grad_input_values = at::zeros_like(input_values, grad_values.options());
+      grad_input_values = at::zeros_like(input_values, grad_values.options(), LEGACY_CONTIGUOUS_MEMORY_FORMAT);
 
       // get flatten indices for grad and input
       auto grad_sparse_dim_to_keep_v = std::vector<int64_t>(grad_sparse_dim);
@@ -1053,30 +1147,31 @@ Tensor _sparse_sum_backward_cpu(const Tensor& grad_, const SparseTensor& input_,
       auto input_indices_1D_accessor = input_indices_1D.accessor<int64_t, 1>();
 
       // binary search to find matching indices
-      int64_t i;
-      #pragma omp parallel for private(i)
-      for (i = 0; i < input_nnz; i++) {
-        int64_t input_idx = input_indices_1D_accessor[i];
-        int64_t l = 0, r = grad_nnz - 1;
-        while (l <= r) {
-          int64_t m = l + (r - l) / 2;
-          if (grad_indices_1D_accessor[m] == input_idx) {
-            grad_input_values[i].copy_(grad_values_expand[m]);
-            break;
-          }
-          if (grad_indices_1D_accessor[m] < input_idx) {
-            l = m + 1;
-          }
-          else {
-            r = m - 1;
+
+      at::parallel_for(0, input_nnz, 0, [&](int64_t start, int64_t end) {
+        for (auto i = start; i < end; i++) {
+          int64_t input_idx = input_indices_1D_accessor[i];
+          int64_t l = 0, r = grad_nnz - 1;
+          while (l <= r) {
+            int64_t m = l + (r - l) / 2;
+            if (grad_indices_1D_accessor[m] == input_idx) {
+              grad_input_values[i].copy_(grad_values_expand[m]);
+              break;
+            }
+            if (grad_indices_1D_accessor[m] < input_idx) {
+              l = m + 1;
+            }
+            else {
+              r = m - 1;
+            }
           }
         }
-      }
+      });
     }
     else {
       grad_input_values = grad_values_expand;
     }
-    return at::_sparse_coo_tensor_with_dims_and_tensors(input_sparse_dim, input_dense_dim, input_sizes, input_indices.clone(), grad_input_values, grad.options());
+    return at::_sparse_coo_tensor_with_dims_and_tensors(input_sparse_dim, input_dense_dim, input_sizes, input_indices.clone(at::MemoryFormat::Contiguous), grad_input_values, grad.options());
   }
 }
 

@@ -49,12 +49,14 @@
 // where & and * represent the C-style address-of and indirection operations.
 
 #include <ATen/native/Indexing.h>
+#include <ATen/native/IndexingUtils.h>
 
 #include <ATen/ATen.h>
 #include <ATen/NativeFunctions.h>
-#include <ATen/LegacyTHFunctions.h>
 #include <ATen/ExpandUtils.h>
 #include <ATen/native/TensorIterator.h>
+#include <ATen/native/BinaryOps.h>
+#include <ATen/core/EnableNamedTensor.h>
 
 #include <algorithm>
 #include <functional>
@@ -65,200 +67,8 @@ namespace at { namespace native {
 
 DEFINE_DISPATCH(index_stub);
 DEFINE_DISPATCH(index_put_stub);
-
-[[noreturn]]
-static void invalid_mask(const Tensor & self, int64_t idx, const Tensor & mask, int64_t maskIdx) {
-  std::stringstream ss;
-  ss << "The shape of the mask " << mask.sizes() << " at index " << maskIdx;
-  ss << " does not match the shape of the indexed tensor " << self.sizes();
-  ss << " at index " << idx;
-  AT_INDEX_ERROR(ss.str());
-}
-
-static void checkIndexTensorTypes(TensorList indices) {
-  for (auto& tensor : indices) {
-    if (tensor.defined()) {
-      auto scalarType = tensor.scalar_type();
-      if (scalarType != kLong && scalarType != kByte && scalarType != kBool) {
-          AT_INDEX_ERROR("tensors used as indices must be long, byte or bool tensors");
-      }
-    }
-  }
-}
-
-static std::vector<Tensor> expandTensors(const Tensor & self, TensorList indices) {
-  // Expands ByteTensor (masks) or BoolTensor (masks) into the equivalent indexing by LongTensors
-  std::vector<Tensor> result;
-  for (auto & index : indices) {
-    if (index.scalar_type() == kByte || index.scalar_type() == kBool) {
-      // The sizes of the ByteTensor mask or bool tensor must match the sizes of the
-      // corresponding dimensions in self
-      for (int64_t j = 0; j < index.dim(); j++) {
-        int64_t srcIdx = result.size() + j;
-        if (index.size(j) != self.size(srcIdx)) {
-          invalid_mask(self, srcIdx, index, j);
-        }
-      }
-      // Replace with nonzeros
-      auto nonzero = index.nonzero();
-      auto special_empty = false;
-      for (int64_t j = 0; j < index.dim(); j++) {
-        if (special_empty) {
-          // We can't call select on an empty tensor so we just create an empty
-          // tensor.
-          result.emplace_back(at::empty({0}, nonzero.options()));
-        } else {
-          result.emplace_back(nonzero.select(1, j));
-        }
-      }
-    } else {
-      result.emplace_back(index);
-    }
-  }
-  return result;
-}
-
-static bool hasContiguousSubspace(TensorList tl) {
-  // true if all the non-null tensors are adjacent
-  auto isDefined = [](const Tensor & tensor){ return tensor.defined(); };
-  auto isNull = [](const Tensor & tensor){ return !tensor.defined(); };
-  auto start = std::find_if(tl.begin(), tl.end(), isDefined);
-  auto stop = std::find_if(tl.rbegin(), tl.rend(), isDefined);
-  auto it = std::find_if(start, stop.base(), isNull);
-  return it == stop.base();
-}
-
-// Transposes the tensor and indices together so that all the non-null indices
-// index the first k dimensions of the tensor. Returns the transposed tensor
-// and the reordered indices. For example:
-//  transposeToFront(tensor, {nullptr, a, nullptr, b})
-// returns
-//  tensor.permute([1, 3, 0, 2]), {a, b, nullptr, nullptr}
-static std::tuple<Tensor, std::vector<Tensor>>
-transposeToFront(Tensor self, TensorList indices) {
-  std::vector<int64_t> dims;
-  std::vector<Tensor> transposedIndices;
-  dims.reserve(self.dim());
-  for (int64_t i = 0; i < self.dim(); i++) {
-    if (indices[i].defined()) {
-      dims.push_back(i);
-      transposedIndices.emplace_back(indices[i]);
-    }
-  }
-  for (int64_t i = 0; i < self.dim(); i++) {
-    if (!indices[i].defined()) {
-      dims.push_back(i);
-      transposedIndices.emplace_back();
-    }
-  }
-  return std::make_tuple(self.permute(dims), std::move(transposedIndices));
-}
-
-static std::vector<int64_t> computeLinearStride(const Tensor & tensor) {
-  // computes the stride as if tensor were contigous
-  auto sizes = tensor.sizes();
-  std::vector<int64_t> stride(tensor.dim());
-  stride[tensor.dim() - 1] = 1;
-  std::partial_sum(sizes.rbegin(), sizes.rend() - 1, stride.rbegin() + 1, std::multiplies<int64_t>());
-  return stride;
-}
-
-// Unsqueezes src `before` times at the front and `after` times at the end
-static Tensor unsqueezeN(const Tensor & src, int64_t before, int64_t after) {
-  auto srcSizes = src.sizes();
-  auto nDim = src.dim();
-  std::vector<int64_t> sizes(nDim + before + after, 1);
-  for (int64_t i = 0; i < nDim; i++) {
-    sizes[i + before] = srcSizes[i];
-  }
-  return src.view(sizes);
-}
-
-static Tensor wrapIndexOnce(const Tensor & index, int64_t dim, int64_t dim_size) {
-  if (index.numel() != 0) {
-    auto max_idx = index.max().item<int64_t>();
-    auto min_idx = index.min().item<int64_t>();
-    if (max_idx >= dim_size) {
-      AT_INDEX_ERROR("index ", max_idx, " is out of bounds for dimension ", dim, " with size ", dim_size);
-    }
-    if (min_idx < -dim_size) {
-      AT_INDEX_ERROR("index ", min_idx, " is out of bounds for dimension ", dim, " with size ", dim_size);
-    }
-  }
-  return index.remainder(dim_size);
-}
-
-static Tensor computeLinearIndex(const Tensor & src, TensorList indices) {
-  auto strides = computeLinearStride(src);
-
-  // Compute the linear index by multiplying the indexing tensors by the
-  // stride and summing them. All the indexing tensors have the same shape at
-  // this point. We also compute the number of dimensions before and after that
-  // are not being index.
-  Tensor linearIndex;
-  int64_t emptyBefore = 0, emptyAfter = 0, nElemBefore = 1, nElemAfter = 1;
-  for (int64_t i = 0; i < src.dim(); i++) {
-    if (indices[i].defined()) {
-      // Cast index to the longType matching src's backend
-      // This allows us to support ie indexing a cuda tensor with a cpu tensor
-      Tensor index = (wrapIndexOnce(indices[i], i, src.size(i)) * strides[i]).to(kLong);
-      if (linearIndex.defined()) {
-        linearIndex += index;
-      } else {
-        linearIndex = index;
-      }
-    } else if (linearIndex.defined()) {
-      emptyAfter++;
-      nElemAfter *= src.size(i);
-    } else {
-      emptyBefore++;
-      nElemBefore *= src.size(i);
-    }
-  }
-
-  // Compute the linear indices for the parts of the tensor not being indexed
-  Tensor beforeIndex;
-  if (emptyBefore > 0) {
-    auto index = at::arange(0, nElemBefore, src.options().dtype(kLong)) * strides[emptyBefore - 1];
-    index = index.view(src.sizes().slice(0, emptyBefore));
-    beforeIndex = unsqueezeN(index, 0, linearIndex.dim() + emptyAfter);
-  }
-  Tensor afterIndex;
-  if (emptyAfter > 0) {
-    auto index = at::arange(0, nElemAfter, src.options().dtype(kLong));
-    index = index.view(src.sizes().slice(src.dim() - emptyAfter, emptyAfter));
-    afterIndex = unsqueezeN(index, linearIndex.dim() + emptyBefore, 0);
-  }
-
-  // Sum with broadcasting to compute the full index
-  linearIndex = unsqueezeN(linearIndex, emptyBefore, emptyAfter);
-  if (beforeIndex.defined()) {
-    linearIndex = linearIndex + beforeIndex;
-  }
-  if (afterIndex.defined()) {
-    linearIndex = linearIndex + afterIndex;
-  }
-  return linearIndex;
-}
-
-static std::tuple<Tensor, Tensor> makeLinearIndex(Tensor self, TensorList orig) {
-  checkIndexTensorTypes(orig);
-  // first expand BoolTensor (masks) or ByteTensor (masks) into 1 or more LongTensors
-  auto indices = expandTensors(self, orig);
-  // next broadcast all index tensors together
-  indices = expand_outplace(indices);
-  // add missing null Tensors so that it matches self.dim()
-  while (indices.size() < (size_t)self.dim()) {
-    indices.emplace_back();
-  }
-  // if the non-null indices are not all adjacent, transpose self and indices
-  // together so that they're adjacent at the front
-  if (!hasContiguousSubspace(indices)) {
-    std::tie(self, indices) = transposeToFront(self, indices);
-  }
-  auto linearIndex = computeLinearIndex(self, indices);
-  return std::make_tuple(self, linearIndex);
-}
+DEFINE_DISPATCH(index_put_accum_stub);
+REGISTER_NO_CPU_DISPATCH(index_put_accum_stub, index_put_accum_fn);
 
 static bool all_strides_match(TensorList tensors) {
   AT_ASSERT(tensors.size() >= 1);
@@ -285,17 +95,6 @@ static std::string shapes_as_str(TensorList tensors) {
   }
   return os.str();
 }
-
-struct AdvancedIndex {
-  AdvancedIndex(const Tensor& src, TensorList indices);
-
-  Tensor src;
-  std::vector<Tensor> indices;
-  DimVector indexed_sizes;
-  DimVector indexed_strides;
-  int64_t dims_before;
-  int64_t dims_after;
-};
 
 // Replace indexed dimensions in src with stride 0 and the size of the result tensor.
 // The offset in these dimensions is computed by the kernel using the index tensor's
@@ -404,31 +203,33 @@ static AdvancedIndex make_info(Tensor self, TensorList orig) {
   return AdvancedIndex(self, indices);
 }
 
-static std::unique_ptr<TensorIterator> make_index_iterator(const AdvancedIndex& info) {
-  auto builder = TensorIterator::Builder();
-  builder.dont_compute_common_dtype();
-  builder.add_output(Tensor(), info.src.type().backend(), info.src.scalar_type());
-  builder.add_input(info.src);
-  for (auto& index : info.indices) {
-    builder.add_input(index);
-  }
-  return builder.build();
-}
-
-static std::unique_ptr<TensorIterator> make_index_put_iterator(const AdvancedIndex& info, const Tensor& value) {
+static TensorIterator make_index_put_iterator(const AdvancedIndex& info, const Tensor& value) {
   if (!is_expandable_to(value.sizes(), info.src.sizes())) {
     AT_ERROR("shape mismatch: value tensor of shape ", value.sizes(),
              " cannot be broadcast to indexing result of shape ", info.src.sizes());
   }
-  auto builder = TensorIterator::Builder();
-  builder.dont_compute_common_dtype();
-  builder.dont_resize_outputs();
-  builder.add_output(info.src);
-  builder.add_input(value, info.src.type().backend(), info.src.scalar_type());
+  auto iter = TensorIterator();
+  iter.dont_compute_common_dtype();
+  iter.dont_resize_outputs();
+  iter.add_output(info.src);
+  iter.add_input(value, info.src.device(), info.src.scalar_type());
   for (auto& index : info.indices) {
-    builder.add_input(index);
+    iter.add_input(index);
   }
-  return builder.build();
+  iter.build();
+  return iter;
+}
+
+static TensorIterator make_index_iterator(const AdvancedIndex& info) {
+  auto iter = TensorIterator();
+  iter.dont_compute_common_dtype();
+  iter.add_output(Tensor(), info.src.device(), info.src.scalar_type());
+  iter.add_input(info.src);
+  for (auto& index : info.indices) {
+    iter.add_input(index);
+  }
+  iter.build();
+  return iter;
 }
 
 Tensor index(const Tensor & self, TensorList indices) {
@@ -438,28 +239,31 @@ Tensor index(const Tensor & self, TensorList indices) {
 
   auto info = make_info(self, indices);
   auto iter = make_index_iterator(info);
-  index_stub(iter->device_type(), *iter, info.indexed_sizes, info.indexed_strides);
-  return iter->output();
+  index_stub(iter.device_type(), iter, info.indexed_sizes, info.indexed_strides);
+  return iter.output();
 }
 
 Tensor index_put(const Tensor & self, TensorList indices, const Tensor & value, bool accumulate) {
-  return self.clone().index_put_(indices, value, accumulate);
+  return self.clone(at::MemoryFormat::Preserve).index_put_(indices, value, accumulate);
 }
 
-Tensor & index_put_(Tensor & self, TensorList indices, const Tensor & value, bool accumulate) {
+Tensor & _index_put_impl_(Tensor & self, TensorList indices, const Tensor & value, const bool accumulate, const bool unsafe) {
   if (indices.size() > (size_t)self.dim()) {
     AT_INDEX_ERROR("too many indices for tensor of dimension ", self.dim(), " (got ", indices.size(), ")");
   }
   if (accumulate && self.type().device_type() == kCUDA) {
-    Tensor src, linearIndex, expandedValue;
-    std::tie(src, linearIndex) = makeLinearIndex(self, indices);
-    std::tie(expandedValue) = expand_inplace(linearIndex, value);
-    return src.put_(linearIndex, expandedValue, true);
+      index_put_accum_stub(self.type().device_type(), self, indices, value, unsafe);
+      return self;
   }
   auto info = make_info(self, indices);
   auto iter = make_index_put_iterator(info, value);
-  index_put_stub(iter->device_type(), *iter, info.indexed_sizes, info.indexed_strides, accumulate);
+  index_put_stub(iter.device_type(), iter, info.indexed_sizes, info.indexed_strides, accumulate);
   return self;
+}
+
+
+Tensor & index_put_(Tensor & self, TensorList indices, const Tensor & value, const bool accumulate) {
+  return at::_index_put_impl_(self, indices, value, accumulate, /*unsafe=*/false);
 }
 
 Tensor & index_copy_(Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
@@ -472,7 +276,11 @@ Tensor & index_copy_(Tensor & self, int64_t dim, const Tensor & index, const Ten
   int64_t numIndices = index.numel();
   if (source.dim() == 0 && numIndices != 1) {
     AT_INDEX_ERROR("index_copy_(): When source is scalar, index should have one element (got ", numIndices, ")");
+  } else if ((source.dim() != self.dim()) && (source.dim() != 0 && self.dim() != 0)) {
+    AT_INDEX_ERROR("index_copy_(): When source and destination are not scalars, their dimensionality must match. Source dimensionality (",
+                   source.dim(), "), destination dimensionality (", self.dim(), ")");
   }
+
   if (index.scalar_type() != ScalarType::Long) {
     AT_INDEX_ERROR("index_copy_(): Expected LongTensor for index");
   }
@@ -500,53 +308,146 @@ Tensor & index_copy_(Tensor & self, int64_t dim, const Tensor & index, const Ten
           "index_copy_(): Number of indices (", numIndices, ") should be equal to source.size(dim) (", source.size(dim), ")");
   }
 
-  return at::legacy::th::_th_index_copy_(self, dim, index, source);
+  return at::_index_copy_(self, dim, index, source);
 }
 
 Tensor index_copy(const Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
-  return self.clone().index_copy_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).index_copy_(dim, index, source);
+}
+
+
+Tensor& index_add_cpu_(Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
+  dim = maybe_wrap_dim(dim, self.dim());
+
+  auto numel = index.numel();
+  TORCH_CHECK_INDEX(index.dim() <= 1, "index_add_(): Index is supposed to be a vector");
+  TORCH_CHECK(index.scalar_type() == ScalarType::Long, "index_add_(): Expected dtype int64 for index");
+  TORCH_CHECK(self.scalar_type() == source.scalar_type(),
+              "index_add_(): self and source must have the same scalar type");
+  TORCH_CHECK(dim == 0 || dim < source.dim(),
+              "index_add_(): Indexing dim ", dim, " is out of bounds of tensor");
+  TORCH_CHECK(numel == (source.dim() == 0 ? 1 : source.size(dim)),
+              "index_add_(): Number of indices should be equal to self.size(dim)");
+
+  auto index_contig = index.contiguous();
+  auto index_data = index_contig.data_ptr<int64_t>();
+
+  if (self.dim() > 1) {
+    // Equivalent to:
+    //   for (auto i = 0; i < numel; i++) {
+    //     auto selfSlice = self.select(dim, index_data[i]);
+    //     auto sourceSlice = source.select(dim, i);
+    //     selfSlice.add_(sourceSlice);
+    //   }
+    // But much faster as this reuses the iterator from add_
+    if (numel == 0) {
+      return self;
+    }
+    auto selfSlice = self.select(dim, 0);
+    auto sourceSlice = source.select(dim, 0);
+    auto self_stride_bytes = self.stride(dim) * elementSize(self.scalar_type());
+    auto source_stride_bytes = source.stride(dim) * elementSize(source.scalar_type());
+    auto self_dim_size = self.size(dim);
+    auto iter = TensorIterator::binary_op(selfSlice, selfSlice, sourceSlice);
+
+    for (auto i = 0; i < numel; i++) {
+      auto self_i = index_data[i];
+      TORCH_CHECK_INDEX((self_i >= 0) && (self_i < self_dim_size), "index out of range in self");
+      auto self_data = static_cast<char*>(selfSlice.data_ptr()) + self_i * self_stride_bytes;
+      auto source_data = static_cast<char*>(sourceSlice.data_ptr()) + i * source_stride_bytes;
+      iter.unsafe_replace_operand(0, self_data);
+      iter.unsafe_replace_operand(1, self_data);
+      iter.unsafe_replace_operand(2, source_data);
+      add_stub(iter.device_type(), iter, 1);
+    }
+  }
+  else {
+    TORCH_CHECK(source.dim() <= 1, "source.dim() (", source.dim(), ") must one or zero for given self.dim() (", self.dim(), ")");
+
+    AT_DISPATCH_ALL_TYPES(self.scalar_type(), "index_add_", [&] {
+      auto self_stride = self.dim() == 0 ? 1 : self.stride(dim);
+      auto source_stride = source.dim() == 0 ? 1 : source.stride(dim);
+      for (auto i = 0; i < numel; i++) {
+        auto self_i = index_data[i];
+        TORCH_CHECK_INDEX((self_i >= 0) && (self_i < self.numel()), "index out of range in self");
+        scalar_t *self_ip = self.data<scalar_t>() + self_i * self_stride;
+        *self_ip += *(source.data<scalar_t>() + i * source_stride);
+      }
+    });
+  }
+  return self;
 }
 
 Tensor index_add(const Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
-  return self.clone().index_add_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).index_add_(dim, index, source);
+}
+
+Tensor & index_fill_(Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
+  TORCH_CHECK(source.dim() == 0, "index_fill_ only supports a 0-dimensional value tensor, but got tensor "
+      "with ", source.dim(), " dimension(s).");
+  return self.index_fill_(dim, index, source.item());
 }
 
 Tensor index_fill(const Tensor & self, int64_t dim, const Tensor & index, Scalar source) {
-  return self.clone().index_fill_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).index_fill_(dim, index, source);
 }
 
 Tensor index_fill(const Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
-  return self.clone().index_fill_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).index_fill_(dim, index, source);
 }
 
 Tensor scatter(const Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
-  return self.clone().scatter_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).scatter_(dim, index, source);
 }
 
 Tensor scatter(const Tensor & self, int64_t dim, const Tensor & index, Scalar source) {
-  return self.clone().scatter_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).scatter_(dim, index, source);
 }
 
 Tensor scatter_add(const Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
-  return self.clone().scatter_add_(dim, index, source);
+  return self.clone(at::MemoryFormat::Preserve).scatter_add_(dim, index, source);
 }
 
 Tensor masked_scatter(const Tensor & self, const Tensor & mask, const Tensor & source) {
   Tensor _mask, _self;
   std::tie(_mask, _self) = expand_outplace(mask, self);
-  return _self.clone().masked_scatter_(_mask, source);
+  return _self.clone(at::MemoryFormat::Contiguous).masked_scatter_(_mask, source);
 }
 
 Tensor masked_fill(const Tensor & self, const Tensor & mask, Scalar source) {
-  Tensor _mask, _self;
-  std::tie(_mask, _self) = expand_outplace(mask, self);
-  return _self.clone().masked_fill_(mask, source);
+  Tensor result;
+#ifdef BUILD_NAMEDTENSOR
+  auto maybe_outnames = namedinference::broadcast_to_outnames(mask, self, "masked_fill");
+  {
+    NoNamesGuard guard;
+#endif
+    Tensor _mask, _self;
+    std::tie(_mask, _self) = expand_outplace(mask, self);
+    result = _self.clone(at::MemoryFormat::Contiguous);
+    result.masked_fill_(mask, source);
+#ifdef BUILD_NAMEDTENSOR
+  }
+  namedinference::propagate_names_if_nonempty(result, maybe_outnames);
+#endif
+  return result;
 }
 
 Tensor masked_fill(const Tensor & self, const Tensor & mask, const Tensor & source) {
+  Tensor result;
+#ifdef BUILD_NAMEDTENSOR
+  auto maybe_outnames = namedinference::broadcast_to_outnames(mask, self, "masked_fill");
+  {
+    NoNamesGuard guard;
+#endif
   Tensor _mask, _self;
   std::tie(_mask, _self) = expand_outplace(mask, self);
-  return _self.clone().masked_fill_(mask, source);
+  result = _self.clone(at::MemoryFormat::Contiguous);
+  result.masked_fill_(mask, source);
+#ifdef BUILD_NAMEDTENSOR
+  }
+  namedinference::propagate_names_if_nonempty(result, maybe_outnames);
+#endif
+  return result;
 }
 
 Tensor _gather_sparse_backward(const Tensor& self, int64_t dim, const Tensor& index, const Tensor& grad){
@@ -567,6 +468,21 @@ Tensor _gather_sparse_backward(const Tensor& self, int64_t dim, const Tensor& in
         n_below *= grad.size(i);
     }
     return at::_sparse_coo_tensor_unsafe(sparse_ind, grad.reshape(-1), self.sizes());
+}
+
+std::vector<Tensor> nonzero_numpy(const Tensor& self) {
+  // special case scalar for compatibility with numpy:
+  //
+  // >>> np.array(5).nonzero()
+  // (array([0]),)
+  // >>> np.array(0).nonzero()
+  // (array([], dtype=int64),)
+
+  if (self.dim() == 0) {
+    return self.unsqueeze(0).nonzero().unbind(1);
+  }
+
+  return self.nonzero().unbind(1);
 }
 
 }} // at::native

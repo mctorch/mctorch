@@ -130,7 +130,7 @@ def get_numerical_jacobian(fn, input, target=None, eps=1e-3):
     return jacobian
 
 
-def get_analytical_jacobian(input, output):
+def get_analytical_jacobian(input, output, nondet_tol=0.0):
     # it is easier to call to_dense() on the sparse output than
     # to modify analytical jacobian
     if output.is_sparse:
@@ -142,7 +142,7 @@ def get_analytical_jacobian(input, output):
     diff_input_list = list(iter_tensors(input, True))
     jacobian = make_jacobian(input, output.numel())
     jacobian_reentrant = make_jacobian(input, output.numel())
-    grad_output = torch.zeros_like(output)
+    grad_output = torch.zeros_like(output, memory_format=torch.legacy_contiguous_format)
     flat_grad_output = grad_output.view(-1)
     reentrant = True
     correct_grad_sizes = True
@@ -165,7 +165,7 @@ def get_analytical_jacobian(input, output):
                         jacobian_x[:, i] = d_x_dense.contiguous().view(-1)
 
     for jacobian_x, jacobian_reentrant_x in zip(jacobian, jacobian_reentrant):
-        if jacobian_x.numel() != 0 and (jacobian_x - jacobian_reentrant_x).abs().max() != 0:
+        if jacobian_x.numel() != 0 and (jacobian_x - jacobian_reentrant_x).abs().max() > nondet_tol:
             reentrant = False
 
     return jacobian, reentrant, correct_grad_sizes
@@ -184,7 +184,7 @@ def _differentiable_outputs(x):
     return tuple(o for o in _as_tuple(x) if o.requires_grad)
 
 
-def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True, check_sparse_nnz=False):
+def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True, check_sparse_nnz=False, nondet_tol=0.0):
     r"""Check gradients computed via small finite differences against analytical
     gradients w.r.t. tensors in :attr:`inputs` that are of floating point type
     and with ``requires_grad=True``.
@@ -215,6 +215,9 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
             exact nature of the failure. This is helpful when debugging gradchecks.
         check_sparse_nnz (bool, optional): if True, gradcheck allows for SparseTensor input,
             and for any SparseTensor at input, gradcheck will perform check at nnz positions only.
+        nondet_tol (float, optional): tolerance for non-determinism. When running
+            identical inputs through the differentiation, the results must either match
+            exactly (default, 0.0) or be within this tolerance.
 
     Returns:
         True if all differences satisfy allclose condition
@@ -273,7 +276,7 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
         def fn(input):
             return _as_tuple(func(*input))[i]
 
-        analytical, reentrant, correct_grad_sizes = get_analytical_jacobian(tupled_inputs, o)
+        analytical, reentrant, correct_grad_sizes = get_analytical_jacobian(tupled_inputs, o, nondet_tol=nondet_tol)
         numerical = get_numerical_jacobian(fn, tupled_inputs, eps=eps)
 
         if not correct_grad_sizes:
@@ -288,7 +291,8 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
         if not reentrant:
             return fail_test('Backward is not reentrant, i.e., running backward with same '
                              'input and grad_output multiple times gives different values, '
-                             'although analytical gradient matches numerical gradient')
+                             'although analytical gradient matches numerical gradient. '
+                             'The tolerance for nondeterminism was {}.'.format(nondet_tol))
 
     # check if the backward multiplies by grad_output
     output = _differentiable_outputs(func(*tupled_inputs))
@@ -296,14 +300,14 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
         diff_input_list = list(iter_tensors(tupled_inputs, True))
         if not diff_input_list:
             raise RuntimeError("no Tensors requiring grad found in input")
-        grads_input = torch.autograd.grad(output, diff_input_list, [torch.zeros_like(o) for o in output],
+        grads_input = torch.autograd.grad(output, diff_input_list, [torch.zeros_like(o, memory_format=torch.legacy_contiguous_format) for o in output],
                                           allow_unused=True)
         for gi, i in zip(grads_input, diff_input_list):
             if gi is None:
                 continue
             if isinstance(gi, torch.Tensor) and gi.layout != torch.strided:
                 if gi.layout != i.layout:
-                    return fail_test('grad is incorrect layout')
+                    return fail_test('grad is incorrect layout (' + str(gi.layout) + ' is not ' + str(i.layout) + ')')
                 if gi.layout == torch.sparse_coo:
                     if gi.sparse_dim() != i.sparse_dim():
                         return fail_test('grad is sparse tensor, but has incorrect sparse_dim')
@@ -322,7 +326,8 @@ def gradcheck(func, inputs, eps=1e-6, atol=1e-5, rtol=1e-3, raise_exception=True
 
 
 def gradgradcheck(func, inputs, grad_outputs=None, eps=1e-6, atol=1e-5, rtol=1e-3,
-                  gen_non_contig_grad_outputs=False, raise_exception=True):
+                  gen_non_contig_grad_outputs=False, raise_exception=True,
+                  nondet_tol=0.0):
     r"""Check gradients of gradients computed via small finite differences
     against analytical gradients w.r.t. tensors in :attr:`inputs` and
     :attr:`grad_outputs` that are of floating point type and with
@@ -361,6 +366,11 @@ def gradgradcheck(func, inputs, grad_outputs=None, eps=1e-6, atol=1e-5, rtol=1e-
         raise_exception (bool, optional): indicating whether to raise an exception if
             the check fails. The exception gives more information about the
             exact nature of the failure. This is helpful when debugging gradchecks.
+        nondet_tol (float, optional): tolerance for non-determinism. When running
+            identical inputs through the differentiation, the results must either match
+            exactly (default, 0.0) or be within this tolerance. Note that a small amount
+            of nondeterminism in the gradient will lead to larger inaccuracies in
+            the second derivative.
 
     Returns:
         True if all differences satisfy allclose condition
@@ -371,7 +381,7 @@ def gradgradcheck(func, inputs, grad_outputs=None, eps=1e-6, atol=1e-5, rtol=1e-
         # If grad_outputs is not specified, create random Tensors of the same
         # shape, type, and device as the outputs
         def randn_like(x):
-            y = torch.testing.randn_like(x if x.is_floating_point() else x.double())
+            y = torch.testing.randn_like(x if x.is_floating_point() else x.double(), memory_format=torch.legacy_contiguous_format)
             if gen_non_contig_grad_outputs:
                 y = torch.testing.make_non_contiguous(y)
             return y.requires_grad_()
@@ -390,4 +400,5 @@ def gradgradcheck(func, inputs, grad_outputs=None, eps=1e-6, atol=1e-5, rtol=1e-
         grad_inputs = torch.autograd.grad(outputs, input_args, grad_outputs, create_graph=True)
         return grad_inputs
 
-    return gradcheck(new_func, tupled_inputs + tupled_grad_outputs, eps, atol, rtol, raise_exception)
+    return gradcheck(new_func, tupled_inputs + tupled_grad_outputs, eps, atol, rtol, raise_exception,
+                     nondet_tol=nondet_tol)

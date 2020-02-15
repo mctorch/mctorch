@@ -2,11 +2,13 @@
 #include <ATen/NativeFunctions.h>
 #include <ATen/AccumulateType.h>
 #include <ATen/cuda/Exceptions.h>
+#include <ATen/cuda/CUDAContext.h>
 #include <cmath>
 #include <limits>
 
 #include <thrust/device_ptr.h>
 #include <thrust/sequence.h>
+#include <thrust/execution_policy.h>
 
 namespace at {
 namespace native {
@@ -38,7 +40,7 @@ struct LogspaceOp {
 };
 
 Tensor& linspace_cuda_out(Tensor& result, Scalar start, Scalar end, int64_t steps) {
-  AT_CHECK(steps >= 0, "number of steps must be non-negative");
+  TORCH_CHECK(steps >= 0, "number of steps must be non-negative");
 
   if (result.numel() != steps) {
     result.resize_({steps});
@@ -50,13 +52,15 @@ Tensor& linspace_cuda_out(Tensor& result, Scalar start, Scalar end, int64_t step
   } else if (steps == 1) {
     r.fill_(start);
   } else {
-    AT_DISPATCH_FLOATING_TYPES(r.scalar_type(), "linspace_cuda", [&]() {
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(r.scalar_type(), "linspace_cuda", [&]() {
       scalar_t scalar_start = start.to<scalar_t>();
       scalar_t scalar_end = end.to<scalar_t>();
       scalar_t step = (scalar_end - scalar_start) / static_cast<scalar_t>(steps - 1);
       LinspaceOp<scalar_t> linspace_method(scalar_start, step);
-      thrust::device_ptr<scalar_t> data_(r.data<scalar_t>());
-      thrust::tabulate(data_, data_ + steps, linspace_method);
+      thrust::device_ptr<scalar_t> data_(r.data_ptr<scalar_t>());
+      cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      auto policy = thrust::cuda::par.on(stream);
+      thrust::tabulate(policy, data_, data_ + steps, linspace_method);
     });
   }
 
@@ -68,7 +72,7 @@ Tensor& linspace_cuda_out(Tensor& result, Scalar start, Scalar end, int64_t step
 }
 
 Tensor& logspace_cuda_out(Tensor& result, Scalar start, Scalar end, int64_t steps, double base) {
-  AT_CHECK(steps >= 0, "number of steps must be non-negative");
+  TORCH_CHECK(steps >= 0, "number of steps must be non-negative");
 
   if (result.numel() != steps) {
     result.resize_({steps});
@@ -80,14 +84,16 @@ Tensor& logspace_cuda_out(Tensor& result, Scalar start, Scalar end, int64_t step
   } else if (steps == 1) {
     r.fill_(std::pow(base, start.to<double>()));
   } else {
-    AT_DISPATCH_FLOATING_TYPES(r.scalar_type(), "logspace_cuda", [&]() {
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(r.scalar_type(), "logspace_cuda", [&]() {
       scalar_t scalar_base = static_cast<scalar_t>(base);
       scalar_t scalar_start = start.to<scalar_t>();
       scalar_t scalar_end = end.to<scalar_t>();
       scalar_t step = (scalar_end - scalar_start) / static_cast<scalar_t>(steps - 1);
       LogspaceOp<scalar_t> logspace_method(scalar_start, step, scalar_base);
-      thrust::device_ptr<scalar_t> data_(r.data<scalar_t>());
-      thrust::tabulate(data_, data_ + steps, logspace_method);
+      thrust::device_ptr<scalar_t> data_(r.data_ptr<scalar_t>());
+      cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      auto policy = thrust::cuda::par.on(stream);
+      thrust::tabulate(policy, data_, data_ + steps, logspace_method);
     });
   }
 
@@ -105,11 +111,11 @@ Tensor& range_cuda_out(Tensor& result, Scalar start, Scalar end, Scalar step) {
     auto xend = end.to<accscalar_t>();
     auto xstep = step.to<accscalar_t>();
 
-    AT_CHECK(xstep > 0 || xstep < 0, "step must be nonzero");
-    AT_CHECK(std::isfinite(static_cast<double>(xstart)) &&
+    TORCH_CHECK(xstep > 0 || xstep < 0, "step must be nonzero");
+    TORCH_CHECK(std::isfinite(static_cast<double>(xstart)) &&
              std::isfinite(static_cast<double>(xend)),
              "unsupported range: ", xstart, " -> ", xend);
-    AT_CHECK(((xstep > 0) && (xend >= xstart)) || ((xstep < 0) && (xend <= xstart)),
+    TORCH_CHECK(((xstep > 0) && (xend >= xstart)) || ((xstep < 0) && (xend <= xstart)),
              "upper bound and larger bound inconsistent with step sign");
     int64_t size = static_cast<int64_t>(((xend - xstart) / xstep) + 1);
     if (result.numel() != size) {
@@ -117,8 +123,10 @@ Tensor& range_cuda_out(Tensor& result, Scalar start, Scalar end, Scalar step) {
     }
     Tensor r = result.is_contiguous() ? result : result.contiguous();
     LinspaceOp<scalar_t, accscalar_t> linspace_method(xstart, xstep);
-    thrust::device_ptr<scalar_t> data_ptr(r.data<scalar_t>());
-    thrust::tabulate(data_ptr, data_ptr + size, linspace_method);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+    auto policy = thrust::cuda::par.on(stream);
+    thrust::device_ptr<scalar_t> data_ptr(r.data_ptr<scalar_t>());
+    thrust::tabulate(policy, data_ptr, data_ptr + size, linspace_method);
 
     if (!result.is_contiguous()) {
       result.copy_(r);
@@ -152,24 +160,33 @@ Tensor& arange_cuda_out(Tensor& result, Scalar start, Scalar end, Scalar step) {
                          / step.to<double>());
     }
 
-    AT_CHECK(xstep > 0 || xstep < 0, "step must be nonzero");
-    AT_CHECK(std::isfinite(static_cast<double>(xstart)) &&
+    TORCH_CHECK(xstep > 0 || xstep < 0, "step must be nonzero");
+    TORCH_CHECK(std::isfinite(static_cast<double>(xstart)) &&
              std::isfinite(static_cast<double>(xend)),
              "unsupported range: ", xstart, " -> ", xend);
-    AT_CHECK(((xstep > 0) && (xend >= xstart)) || ((xstep < 0) && (xend <= xstart)),
+    TORCH_CHECK(((xstep > 0) && (xend >= xstart)) || ((xstep < 0) && (xend <= xstart)),
              "upper bound and larger bound inconsistent with step sign");
 
-    AT_CHECK(size_d >= 0 && size_d <= static_cast<double>(std::numeric_limits<int64_t>::max()),
+    TORCH_CHECK(size_d >= 0 && size_d <= static_cast<double>(std::numeric_limits<int64_t>::max()),
              "invalid size, possible overflow?");
     int64_t size = static_cast<int64_t>(size_d);
+    int64_t numel = result.numel();
 
-    if (result.numel() != size) {
+    if (numel != size) {
+      if(numel > 0){
+        TORCH_WARN("The number of elements in the out tensor of shape ", result.sizes(),
+                    " is ", numel, " which does not match the computed number of elements ", size,
+                    ". Note that this may occur as a result of rounding error. "
+                    "The out tensor will be resized to a tensor of shape (", size, ",).");
+      }
       result.resize_({size});
     }
     Tensor r = result.is_contiguous() ? result : result.contiguous();
     LinspaceOp<scalar_t, accscalar_t> linspace_method(xstart, xstep);
-    thrust::device_ptr<scalar_t> data_ptr(r.data<scalar_t>());
-    thrust::tabulate(data_ptr, data_ptr + size, linspace_method);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+    auto policy = thrust::cuda::par.on(stream);
+    thrust::device_ptr<scalar_t> data_ptr(r.data_ptr<scalar_t>());
+    thrust::tabulate(policy, data_ptr, data_ptr + size, linspace_method);
 
     if (!result.is_contiguous()) {
       result.copy_(r);

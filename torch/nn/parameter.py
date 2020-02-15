@@ -46,7 +46,7 @@ class Parameter(torch.Tensor):
         if id(self) in memo:
             return memo[id(self)]
         else:
-            result = type(self)(self.data.clone(), self.requires_grad, self.manifold)
+            result = type(self)(self.data.clone(memory_format=torch.preserve_format), self.requires_grad, self.manifold)
             memo[id(self)] = result
             return result
 

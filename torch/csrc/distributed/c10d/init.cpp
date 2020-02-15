@@ -1,8 +1,12 @@
 #include <torch/csrc/python_headers.h>
 
 #include <c10d/FileStore.hpp>
+#include <c10d/HashStore.hpp>
 #include <c10d/ProcessGroup.hpp>
+
+#ifdef USE_C10D_GLOO
 #include <c10d/ProcessGroupGloo.hpp>
+#endif
 
 #ifdef USE_C10D_NCCL
 #include <c10d/ProcessGroupNCCL.hpp>
@@ -14,10 +18,10 @@
 
 #include <c10d/PrefixStore.hpp>
 #include <c10d/TCPStore.hpp>
-#include <gloo/transport/tcp/device.h>
 #include <pybind11/chrono.h>
 
 #include <torch/csrc/Exceptions.h>
+#include <torch/csrc/distributed/c10d/comm.h>
 #include <torch/csrc/distributed/c10d/ddp.h>
 #include <torch/csrc/distributed/c10d/reducer.h>
 #include <torch/csrc/utils/object_ptr.h>
@@ -29,12 +33,25 @@ namespace c10d {
 
 namespace {
 
+#ifdef USE_C10D_GLOO
 constexpr char* GLOO_SOCKET_IFNAME_ENV = "GLOO_SOCKET_IFNAME";
+#endif
+
+std::vector<std::string> split(char separator, const std::string& string) {
+  std::vector<std::string> pieces;
+  std::stringstream ss(string);
+  std::string item;
+  while (std::getline(ss, item, separator)) {
+    pieces.push_back(std::move(item));
+  }
+  return pieces;
+}
 
 template <typename T>
 using shared_ptr_class_ = py::class_<T, std::shared_ptr<T>>;
 
 PyObject* c10d_init(PyObject* _unused) {
+  C10_LOG_API_USAGE_ONCE("c10d.python.import");
   auto c10d_module = THPObjectPtr(PyImport_ImportModule("torch.distributed"));
   if (!c10d_module) {
     throw python_error();
@@ -43,10 +60,16 @@ PyObject* c10d_init(PyObject* _unused) {
   auto module = py::handle(c10d_module).cast<py::module>();
 
   shared_ptr_class_<::c10d::Reducer>(module, "Reducer")
-      .def(py::init<
-           std::vector<std::vector<torch::autograd::Variable>>,
-           std::vector<std::vector<size_t>>,
-           std::shared_ptr<::c10d::ProcessGroup>>())
+      .def(
+          py::init<
+              std::vector<std::vector<torch::autograd::Variable>>,
+              std::vector<std::vector<size_t>>,
+              std::shared_ptr<::c10d::ProcessGroup>,
+              std::vector<std::vector<bool>>>(),
+          py::arg("replicas"),
+          py::arg("bucket_indices"),
+          py::arg("process_group"),
+          py::arg("expect_sparse_gradients") = std::vector<std::vector<bool>>())
       .def(
           "initialize_buckets",
           &::c10d::Reducer::initialize_buckets,
@@ -63,8 +86,8 @@ PyObject* c10d_init(PyObject* _unused) {
       .def("get_backward_stats", &::c10d::Reducer::get_backward_stats);
 
   py::enum_<::c10d::ReduceOp>(module, "ReduceOp", R"(
-An enum-like class of available reduce operations: ``SUM``, ``PRODUCT``,
-``MIN``, and ``MAX``.
+An enum-like class for available reduction operations: ``SUM``, ``PRODUCT``,
+``MIN``, ``MAX``, ``BAND``, ``BOR``, and ``BXOR``.
 
 The values of this class can be accessed as attributes, e.g., ``ReduceOp.SUM``.
 They are used in specifying strategies for reduction collectives, e.g.,
@@ -72,7 +95,10 @@ They are used in specifying strategies for reduction collectives, e.g.,
       .value("SUM", ::c10d::ReduceOp::SUM)
       .value("PRODUCT", ::c10d::ReduceOp::PRODUCT)
       .value("MIN", ::c10d::ReduceOp::MIN)
-      .value("MAX", ::c10d::ReduceOp::MAX);
+      .value("MAX", ::c10d::ReduceOp::MAX)
+      .value("BAND", ::c10d::ReduceOp::BAND)
+      .value("BOR", ::c10d::ReduceOp::BOR)
+      .value("BXOR", ::c10d::ReduceOp::BXOR);
 
   py::class_<::c10d::BroadcastOptions>(module, "BroadcastOptions")
       .def(py::init<>())
@@ -84,6 +110,12 @@ They are used in specifying strategies for reduction collectives, e.g.,
       .def(py::init<>())
       .def_readwrite("reduceOp", &::c10d::AllreduceOptions::reduceOp)
       .def_readwrite("timeout", &::c10d::AllreduceOptions::timeout);
+
+  py::class_<::c10d::AllreduceCoalescedOptions>(
+      module, "AllreduceCoalescedOptions")
+      .def(py::init<>())
+      .def_readwrite("reduceOp", &::c10d::AllreduceCoalescedOptions::reduceOp)
+      .def_readwrite("timeout", &::c10d::AllreduceCoalescedOptions::timeout);
 
   py::class_<::c10d::ReduceOptions>(module, "ReduceOptions")
       .def(py::init<>())
@@ -163,6 +195,9 @@ They are used in specifying strategies for reduction collectives, e.g.,
   shared_ptr_class_<::c10d::FileStore>(module, "FileStore", store)
       .def(py::init<const std::string&, int>());
 
+  shared_ptr_class_<::c10d::HashStore>(module, "HashStore", store)
+      .def(py::init<>());
+
   shared_ptr_class_<::c10d::TCPStore>(module, "TCPStore", store)
       .def(py::init<const std::string&, int, int, bool>());
 
@@ -226,6 +261,17 @@ They are used in specifying strategies for reduction collectives, e.g.,
               py::call_guard<py::gil_scoped_release>())
 
           .def(
+              "allreduce_coalesced",
+              [](::c10d::ProcessGroup& pg,
+                 std::vector<at::Tensor>& xs,
+                 ::c10d::AllreduceCoalescedOptions opts) {
+                return pg.allreduce_coalesced(xs, opts);
+              },
+              py::arg("tensors"),
+              py::arg("opts") = ::c10d::AllreduceCoalescedOptions(),
+              py::call_guard<py::gil_scoped_release>())
+
+          .def(
               "reduce",
               &::c10d::ProcessGroup::reduce,
               py::arg("tensors"),
@@ -269,6 +315,14 @@ They are used in specifying strategies for reduction collectives, e.g.,
               },
               py::arg("output_tensors"),
               py::arg("input_tensor"),
+              py::call_guard<py::gil_scoped_release>())
+
+          .def(
+              "allgather_coalesced",
+              &::c10d::ProcessGroup::allgather_coalesced,
+              py::arg("output_lists"),
+              py::arg("input_list"),
+              py::arg("opts") = ::c10d::AllgatherOptions(),
               py::call_guard<py::gil_scoped_release>())
 
           .def(
@@ -370,6 +424,7 @@ They are used in specifying strategies for reduction collectives, e.g.,
               py::arg("opts") = ::c10d::BarrierOptions(),
               py::call_guard<py::gil_scoped_release>());
 
+#ifdef USE_C10D_GLOO
   auto processGroupGloo = shared_ptr_class_<::c10d::ProcessGroupGloo>(
       module, "ProcessGroupGloo", processGroup);
 
@@ -383,20 +438,17 @@ They are used in specifying strategies for reduction collectives, e.g.,
       .def_readwrite("threads", &::c10d::ProcessGroupGloo::Options::threads);
 
   processGroupGloo.def_static(
-      "create_tcp_device",
+      "create_device",
       [](const std::string& hostname, const std::string& interface)
           -> std::shared_ptr<::gloo::transport::Device> {
-        ::gloo::transport::tcp::attr attr;
         if (!hostname.empty()) {
-          attr.hostname = hostname;
-        } else if (!interface.empty()) {
-          attr.iface = interface;
-        } else {
-          // Neither argument is specified; Gloo itself will use the
-          // hostname
-          // Nothing specified, default to something useful
+          return ::c10d::ProcessGroupGloo::createDeviceForHostname(hostname);
         }
-        return ::gloo::transport::tcp::CreateDevice(attr);
+        if (!interface.empty()) {
+          return ::c10d::ProcessGroupGloo::createDeviceForInterface(interface);
+        }
+        throw std::invalid_argument(
+            "Specify either `hostname` or `interface` argument.");
       },
       py::arg("hostname") = "",
       py::arg("interface") = "");
@@ -413,26 +465,24 @@ They are used in specifying strategies for reduction collectives, e.g.,
                       int size,
                       std::chrono::milliseconds timeout) {
             ::c10d::ProcessGroupGloo::Options options;
-            ::gloo::transport::tcp::attr attr;
-            // First step, check "GLOO_SOCKET_IFNAME" environmental variable
-            // that can be set by the user
+
+            // Use interfaces listed in "GLOO_SOCKET_IFNAME", if set.
             char* ifnameEnv = getenv(GLOO_SOCKET_IFNAME_ENV);
             if (ifnameEnv) {
-              attr.iface = std::string(ifnameEnv);
-            } else {
-              // Use the hostname to resolve the network address to
-              // use. Note: if the hostname does not resolve to an address (e.g.
-              // because of misconfigured /etc/hosts file), this will not work.
-              std::array<char, HOST_NAME_MAX> hostname{};
-              auto rv = gethostname(hostname.data(), hostname.size());
-              if (rv != 0) {
-                throw std::system_error(errno, std::system_category());
+              for (const auto& iface : split(',', ifnameEnv)) {
+                options.devices.push_back(
+                    ::c10d::ProcessGroupGloo::createDeviceForInterface(iface));
               }
-              attr.hostname = hostname.data();
+            } else {
+              // If no hostname is specified, this function looks up
+              // the machine's hostname and returns a device instance
+              // associated with the address that the hostname resolves to.
+              options.devices.push_back(
+                  ::c10d::ProcessGroupGloo::createDefaultDevice());
             }
-            options.devices.push_back(
-                ::gloo::transport::tcp::CreateDevice(attr));
+
             options.timeout = timeout;
+            options.threads = options.devices.size() * 2;
             return std::make_shared<::c10d::ProcessGroupGloo>(
                 store, rank, size, options);
           }),
@@ -440,6 +490,7 @@ They are used in specifying strategies for reduction collectives, e.g.,
           py::arg("rank"),
           py::arg("size"),
           py::arg("timeout") = std::chrono::milliseconds(10 * 1000));
+#endif
 
 #ifdef USE_C10D_NCCL
   shared_ptr_class_<::c10d::ProcessGroupNCCL>(
@@ -449,11 +500,12 @@ They are used in specifying strategies for reduction collectives, e.g.,
               const std::shared_ptr<::c10d::Store>&,
               int,
               int,
-              const std::string&>(),
+              const std::chrono::milliseconds&>(),
           py::arg("store"),
           py::arg("rank"),
           py::arg("size"),
-          py::arg("groupName") = "");
+          py::arg("timeout") = std::chrono::milliseconds(
+              ::c10d::ProcessGroupNCCL::kProcessGroupNCCLOpTimeoutMillis));
 #endif
 
 #ifdef USE_C10D_MPI
@@ -463,11 +515,9 @@ They are used in specifying strategies for reduction collectives, e.g.,
   // Define static create function instead of a constructor, because
   // this function may return null. This happens if this process is not
   // part of a sub group that is to be created.
-  processGroupMPI.def_static(
-      "create",
-      [](std::vector<int> ranks) {
-        return ::c10d::ProcessGroupMPI::createProcessGroupMPI(ranks);
-      });
+  processGroupMPI.def_static("create", [](std::vector<int> ranks) {
+    return ::c10d::ProcessGroupMPI::createProcessGroupMPI(ranks);
+  });
 #endif
 
   shared_ptr_class_<::c10d::ProcessGroup::Work>(module, "Work")
@@ -475,6 +525,11 @@ They are used in specifying strategies for reduction collectives, e.g.,
       .def("is_success", &::c10d::ProcessGroup::Work::isSuccess)
       .def("exception", &::c10d::ProcessGroup::Work::exception)
       .def("source_rank", &::c10d::ProcessGroup::Work::sourceRank)
+      .def(
+          "result",
+          [](::c10d::ProcessGroup::Work& work) -> std::vector<at::Tensor> {
+            return work.result();
+          })
       .def("synchronize", &::c10d::ProcessGroup::Work::synchronize)
       .def(
           "wait",
@@ -532,6 +587,22 @@ They are used in specifying strategies for reduction collectives, e.g.,
       &::c10d::compute_bucket_assignment_by_size,
       py::arg("tensors"),
       py::arg("bucket_size"),
+      py::arg("expect_sparse_gradient") = std::vector<bool>(),
+      py::call_guard<py::gil_scoped_release>());
+
+  module.def(
+      "_broadcast_coalesced",
+      // Define a lambda such that the pybind11 prototype can take a std::vector
+      // for the tensor list argument, but still pass it to the underlying
+      // function as a c10::ArrayRef.
+      [](std::shared_ptr<::c10d::ProcessGroup> process_group,
+         std::vector<at::Tensor> tensors,
+         size_t buffer_size) {
+        broadcast_coalesced(process_group, tensors, buffer_size);
+      },
+      py::arg("process_group"),
+      py::arg("tensors"),
+      py::arg("buffer_size"),
       py::call_guard<py::gil_scoped_release>());
 
   Py_RETURN_TRUE;

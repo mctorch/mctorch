@@ -1,3 +1,5 @@
+# @lint-ignore-every PYTHON3COMPATIMPORTS
+
 r"""
 The torch package contains data structures for multi-dimensional
 tensors and mathematical operations over these are defined.
@@ -13,18 +15,18 @@ import sys
 import platform
 from ._utils import _import_dotted_name
 from ._utils_internal import get_file_path, prepare_multiprocessing_environment
-from .version import __version__  # noqa: F401
+from .version import __version__
 from ._six import string_classes as _string_classes
 
 __all__ = [
     'typename', 'is_tensor', 'is_storage', 'set_default_tensor_type',
-    'set_rng_state', 'get_rng_state', 'manual_seed', 'initial_seed',
+    'set_rng_state', 'get_rng_state', 'manual_seed', 'initial_seed', 'seed',
     'save', 'load', 'set_printoptions', 'chunk', 'split', 'stack', 'matmul',
     'no_grad', 'enable_grad', 'rand', 'randn',
     'DoubleStorage', 'FloatStorage', 'LongStorage', 'IntStorage',
-    'ShortStorage', 'CharStorage', 'ByteStorage',
+    'ShortStorage', 'CharStorage', 'ByteStorage', 'BoolStorage',
     'DoubleTensor', 'FloatTensor', 'LongTensor', 'IntTensor',
-    'ShortTensor', 'CharTensor', 'ByteTensor', 'Tensor',
+    'ShortTensor', 'CharTensor', 'ByteTensor', 'BoolTensor', 'Tensor',
 ]
 
 ################################################################################
@@ -39,7 +41,7 @@ import os as _dl_flags
 # if we have numpy, it *must* be imported before the call to setdlopenflags()
 # or there is risk that later c modules will segfault when importing numpy
 try:
-    import numpy as _np  # noqa: F401
+    import numpy as _np
 except ImportError:
     pass
 
@@ -53,7 +55,7 @@ if platform.system() == 'Windows':
         else:
             return ''
 
-    py_dll_path = _dl_flags.path.join(_dl_flags.path.dirname(sys.executable), 'Library', 'bin')
+    py_dll_path = _dl_flags.path.join(sys.exec_prefix, 'Library', 'bin')
     th_dll_path = _dl_flags.path.join(_dl_flags.path.dirname(__file__), 'lib')
 
     dll_paths = [th_dll_path, py_dll_path, get_nvToolsExt_path(), _dl_flags.environ['PATH']]
@@ -131,7 +133,7 @@ def is_storage(obj):
 
 def set_default_tensor_type(t):
     r"""Sets the default ``torch.Tensor`` type to floating point tensor type
-    :attr:`t`. This type will also be used as default floating point type for
+    ``t``. This type will also be used as default floating point type for
     type inference in :func:`torch.tensor`.
 
     The default floating point tensor type is initially ``torch.FloatTensor``.
@@ -175,7 +177,7 @@ def set_default_dtype(d):
     _C._set_default_dtype(d)
 
 # If you edit these imports, please update torch/__init__.py.in as well
-from .random import set_rng_state, get_rng_state, manual_seed, initial_seed
+from .random import set_rng_state, get_rng_state, manual_seed, initial_seed, seed
 from .serialization import save, load
 from ._tensor_str import set_printoptions
 
@@ -222,9 +224,25 @@ class ByteStorage(_C.ByteStorageBase, _StorageBase):
 class BoolStorage(_C.BoolStorageBase, _StorageBase):
     pass
 
+
+class BFloat16Storage(_C.BFloat16StorageBase, _StorageBase):
+    pass
+
+
+class QUInt8Storage(_C.QUInt8StorageBase, _StorageBase):
+    pass
+
+class QInt8Storage(_C.QInt8StorageBase, _StorageBase):
+    pass
+
+class QInt32Storage(_C.QInt32StorageBase, _StorageBase):
+    pass
+
+
 _storage_classes = {
     DoubleStorage, FloatStorage, LongStorage, IntStorage, ShortStorage,
-    CharStorage, ByteStorage, HalfStorage, BoolStorage
+    CharStorage, ByteStorage, HalfStorage, BoolStorage, QUInt8Storage, QInt8Storage,
+    QInt32Storage, BFloat16Storage
 }
 
 # The _tensor_classes set is initialized by the call to _C._initialize_tensor_type_bindings()
@@ -274,6 +292,8 @@ del ShortStorageBase
 del CharStorageBase
 del ByteStorageBase
 del BoolStorageBase
+del QUInt8StorageBase
+del BFloat16StorageBase
 
 ################################################################################
 # Import most common subpackages
@@ -281,8 +301,10 @@ del BoolStorageBase
 
 import torch.cuda
 import torch.autograd
-from torch.autograd import no_grad, enable_grad, set_grad_enabled  # noqa: F401
+from torch.autograd import no_grad, enable_grad, set_grad_enabled
 import torch.nn
+import torch.nn.intrinsic
+import torch.nn.quantized
 import torch.optim
 import torch.multiprocessing
 import torch.sparse
@@ -296,7 +318,11 @@ import torch.testing
 import torch.backends.cuda
 import torch.backends.mkl
 import torch.backends.openmp
+import torch.backends.quantized
+import torch.quantization
+import torch.utils.data
 import torch.__config__
+import torch.__future__
 
 _C._init_names(list(torch._storage_classes))
 
@@ -311,7 +337,13 @@ def compiled_with_cxx11_abi():
 
 
 # Import the ops "namespace"
-from torch._ops import ops  # noqa: F401
+from torch._ops import ops
+from torch._classes import classes
 
 # Import the quasi random sampler
 import torch.quasirandom
+
+# If you are seeing this, it means that this call site was not checked if
+# the memory format could be preserved, and it was switched to old default
+# behaviour of contiguous
+legacy_contiguous_format = contiguous_format

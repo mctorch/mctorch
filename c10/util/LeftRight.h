@@ -31,6 +31,23 @@ private:
 template <class T>
 class LeftRight final {
 public:
+    template<class... Args>
+    explicit LeftRight(const Args& ...args)
+    : _counters{{{0}, {0}}}
+    , _foregroundCounterIndex(0)
+    , _foregroundDataIndex(0)
+    , _inDestruction(false)
+    , _data{{T{args...}, T{args...}}}
+    , _writeMutex()
+    {}
+
+    // Copying and moving would not be threadsafe.
+    // Needs more thought and careful design to make that work.
+    LeftRight(const LeftRight&) = delete;
+    LeftRight(LeftRight&&) noexcept = delete;
+    LeftRight& operator=(const LeftRight&) = delete;
+    LeftRight& operator=(LeftRight&&) noexcept= delete;
+
     ~LeftRight() {
         // from now on, no new readers/writers will be accepted (see asserts in read()/write())
         _inDestruction = true;
@@ -50,7 +67,7 @@ public:
     auto read(F&& readFunc) const -> typename std::result_of<F(const T&)>::type {
         detail::IncrementRAII _increment_counter(&_counters[_foregroundCounterIndex.load()]);
 
-        if(_inDestruction.load()) {
+        if(C10_UNLIKELY(_inDestruction.load())) {
             throw std::logic_error("Issued LeftRight::read() after the destructor started running");
         }
 
@@ -63,8 +80,8 @@ public:
     auto write(F&& writeFunc) -> typename std::result_of<F(T&)>::type {
         std::unique_lock<std::mutex> lock(_writeMutex);
 
-        if(_inDestruction.load()) {
-            throw std::logic_error("Issued LeftRight::read() after the destructor started running");
+        if(C10_UNLIKELY(_inDestruction.load())) {
+            throw std::logic_error("Issued LeftRight::write() after the destructor started running");
         }
 
         return _write(writeFunc);
@@ -149,12 +166,12 @@ private:
         }
     }
 
+    mutable std::array<std::atomic<int32_t>, 2> _counters;
+    std::atomic<uint8_t> _foregroundCounterIndex;
+    std::atomic<uint8_t> _foregroundDataIndex;
+    std::atomic<bool> _inDestruction;
+    std::array<T, 2> _data;
     std::mutex _writeMutex;
-    std::atomic<uint8_t> _foregroundCounterIndex = {0};
-    std::atomic<uint8_t> _foregroundDataIndex = {0};
-    mutable std::array<std::atomic<int32_t>, 2> _counters = {{{0}, {0}}};
-    std::array<T, 2> _data = {{{}, {}}};
-    std::atomic<bool> _inDestruction = {false};
 };
 
 }

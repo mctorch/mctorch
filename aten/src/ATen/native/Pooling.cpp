@@ -12,7 +12,7 @@ static void check1d(
     const char* function_name,
     const char* argument_name,
     IntArrayRef x) {
-  AT_CHECK(
+  TORCH_CHECK(
       x.size() == 1,
       function_name, "() argument '", argument_name,
       "' should contain one int (got ", x.size(), ")");
@@ -114,6 +114,10 @@ Tensor max_pool2d(
     IntArrayRef padding,
     IntArrayRef dilation,
     bool ceil_mode) {
+  if (self.is_quantized()) {
+    return at::quantized_max_pool2d(self, kernel_size, stride, padding,
+                                    dilation, ceil_mode);
+  }
   if (self.is_mkldnn()) {
     return at::mkldnn_max_pool2d(
         self, kernel_size, stride, padding, dilation, ceil_mode);
@@ -134,5 +138,14 @@ Tensor max_pool3d(
       self, kernel_size, stride, padding, dilation, ceil_mode);
   return std::get<0>(output_and_indices);
 }
+
+Tensor _test_optional_float(const Tensor & self, c10::optional<double> scale) {
+  if (scale.has_value()) {
+    return at::full({}, scale.value(), self.options());
+  } else {
+    return at::empty({0}, self.options());
+  }
+}
+
 } // namespace native
 } // namespace at

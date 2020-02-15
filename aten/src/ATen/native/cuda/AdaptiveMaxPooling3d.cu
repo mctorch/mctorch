@@ -307,22 +307,21 @@ void adaptive_max_pool3d_out_cuda_template(
   checkAllSameGPU("adaptive_max_pool3d_cuda", {output_arg, indices_arg, input_arg});
 
   for (int64_t i = 0; i < input_.ndimension(); i++) {
-    AT_CHECK(input_.size(i) > 0,
+    TORCH_CHECK(input_.size(i) > 0,
       "adaptive_max_pool3d_cuda(): expected input to have non-empty spatial dimensions, "
       "but input has sizes ", input_.sizes(), " with dimension ", i, " being "
       "empty");
   }
 
-  AT_CHECK((input_.ndimension() == 4 || input_.ndimension() == 5),
+  TORCH_CHECK((input_.ndimension() == 4 || input_.ndimension() == 5),
     "non-empty 4D or 5D (batch mode) tensor expected for input");
 
-  // the jit sometimes passes output_size.size() == 1
-  AT_CHECK(output_size.size() == 1 || output_size.size() == 3,
-    "adaptive_max_pool3d: internal error: output_size.size() must be 1 or 3");
+  TORCH_CHECK(output_size.size() == 3,
+    "adaptive_max_pool3d: internal error: output_size.size() must be 3");
 
   int64_t osizeT = output_size[0];
-  int64_t osizeH = output_size.size() == 1 ? output_size[0] : output_size[1];
-  int64_t osizeW = output_size.size() == 1 ? output_size[0] : output_size[2];
+  int64_t osizeH = output_size[1];
+  int64_t osizeW = output_size[2];
 
   int64_t sizeD, isizeT, isizeH, isizeW;
   int64_t istrideD, istrideT, istrideH, istrideW;
@@ -366,9 +365,9 @@ void adaptive_max_pool3d_out_cuda_template(
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(),
     "adaptive_max_pool3d_cuda",
     [&] {
-      scalar_t *input_data = input.data<scalar_t>();
-      scalar_t *output_data = output.data<scalar_t>();
-      int64_t *indices_data = indices.data<int64_t>();
+      scalar_t *input_data = input.data_ptr<scalar_t>();
+      scalar_t *output_data = output.data_ptr<scalar_t>();
+      int64_t *indices_data = indices.data_ptr<int64_t>();
 
       adaptivemaxpool_loop(
         input_data, output_data, indices_data, totalZ, isizeT, isizeH, isizeW,
@@ -433,9 +432,9 @@ void adaptive_max_pool3d_backward_out_cuda_template(
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(),
       "adaptive_max_pool3d_backward_cuda",
       [&] {
-        scalar_t *gradInput_data = gradInput.data<scalar_t>();
-        scalar_t *gradOutput_data = gradOutput.data<scalar_t>();
-        int64_t *indices_data = indices.data<int64_t>();
+        scalar_t *gradInput_data = gradInput.data_ptr<scalar_t>();
+        scalar_t *gradOutput_data = gradOutput.data_ptr<scalar_t>();
+        int64_t *indices_data = indices.data_ptr<int64_t>();
 
         atomicadaptivemaxgradinput_loop(
           gradInput_data, gradOutput_data, indices_data,
@@ -447,9 +446,9 @@ void adaptive_max_pool3d_backward_out_cuda_template(
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(),
       "adaptive_max_pool3d_backward_cuda",
       [&] {
-        scalar_t *gradInput_data = gradInput.data<scalar_t>();
-        scalar_t *gradOutput_data = gradOutput.data<scalar_t>();
-        int64_t *indices_data = indices.data<int64_t>();
+        scalar_t *gradInput_data = gradInput.data_ptr<scalar_t>();
+        scalar_t *gradOutput_data = gradOutput.data_ptr<scalar_t>();
+        int64_t *indices_data = indices.data_ptr<int64_t>();
 
         adaptivemaxgradinput_loop(
           gradInput_data, gradOutput_data, indices_data,
@@ -509,7 +508,7 @@ Tensor adaptive_max_pool3d_backward_cuda(
   const Tensor& input,
   const Tensor& indices)
 {
-  auto gradInput = at::zeros_like(input);
+  auto gradInput = at::zeros_like(input, LEGACY_CONTIGUOUS_MEMORY_FORMAT);
   adaptive_max_pool3d_backward_out_cuda_template(
     gradInput,
     gradOutput_,

@@ -2,19 +2,15 @@
 #include <ATen/core/Macros.h>
 #include <c10/util/C++17.h>
 #include <c10/util/Exception.h>
+#include <torch/csrc/WindowsTorchApiMacro.h>
 #include <torch/csrc/jit/script/strtod.h>
 #include <torch/csrc/jit/source_range.h>
-#include <torch/csrc/WindowsTorchApiMacro.h>
-#include <ATen/core/Macros.h>
 #include <algorithm>
 #include <clocale>
 #include <cstdlib>
-#include <cstring>
-#include <iostream>
 #include <memory>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace torch {
@@ -91,6 +87,7 @@ namespace script {
   _(TK_TUPLE_LITERAL, "tuple-literal", "")       \
   _(TK_FOR, "for", "for")                        \
   _(TK_IN, "in", "in")                           \
+  _(TK_NOTIN, "not in", "not in")                \
   _(TK_STARRED, "starred", "")                   \
   _(TK_UNARY_MINUS, "unary minus", "")           \
   _(TK_POW, "pow operator", "**")                \
@@ -102,11 +99,13 @@ namespace script {
   _(TK_ASSERT, "assert", "assert")               \
   _(TK_DOTS, "dots", "...")                      \
   _(TK_LIST_COMP, "list comprehension", "")      \
+  _(TK_BREAK, "break", "break")                  \
+  _(TK_CONTINUE, "continue", "continue")         \
   _(TK_PASS, "pass", "pass")                     \
   _(TK_CLASS_DEF, "class", "class")              \
   _(TK_IMPORT, "import", "import")
 
-static const char* valid_single_char_tokens = "+-*/%@()[]:,={}><.?!&^|";
+static const char* valid_single_char_tokens = "+-*/%@()[]:,={}><.?!&^|~";
 
 enum TokenKind {
   // we use characters to represent themselves so skip all valid characters
@@ -371,8 +370,8 @@ struct Token {
 };
 
 struct Lexer {
-  explicit Lexer(const std::string& str)
-      : file(std::make_shared<std::string>(str)),
+  explicit Lexer(const std::shared_ptr<Source>& source)
+      : source(source),
         pos(0),
         nesting(0),
         indent_stack(),
@@ -489,9 +488,9 @@ struct Lexer {
     int kind;
     size_t start;
     size_t length;
-    AT_ASSERT(file);
+    AT_ASSERT(source);
     if (!shared.match(
-            *file,
+            source->text(),
             pos,
             nesting > 0,
             whitespace_token,
@@ -500,14 +499,15 @@ struct Lexer {
             &length)) {
       expected(
           "a valid token",
-          Token((*file)[start], SourceRange(file, start, start + 1)));
+          Token(
+              (source->text())[start], SourceRange(source, start, start + 1)));
     }
-    auto t = Token(kind, SourceRange(file, start, start + length));
+    auto t = Token(kind, SourceRange(source, start, start + length));
     pos = start + length;
     return t;
   }
 
-  std::shared_ptr<std::string> file;
+  std::shared_ptr<Source> source;
   size_t pos;
   size_t nesting; // depth of ( [ { nesting...
   std::vector<int> indent_stack; // stack of identation level of blocks

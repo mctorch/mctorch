@@ -21,6 +21,7 @@
 #include <THC/THCThrustAllocator.cuh>
 #include <ATen/native/cuda/SortingCommon.cuh>
 #include <ATen/native/cuda/SortingRadixSelect.cuh>
+#include <ATen/NamedTensorUtils.h>
 
 namespace at {
 namespace native {
@@ -40,7 +41,7 @@ __global__ void gatherKthValue(
     cuda::detail::TensorInfo<int64_t, index_t> indices) {
   // Indices are limited to integer fp precision, so counts can fit in
   // int32, regardless of index_t
-  __shared__ int smem[WARP_SIZE]; // one per each warp, up to warp limit
+  __shared__ int smem[C10_WARP_SIZE]; // one per each warp, up to warp limit
 
   index_t slice = getLinearBlockId<index_t>();
   if (slice >= numInputSlices) {
@@ -117,7 +118,7 @@ struct KthValueLauncher {
     }
 
     dim3 block(
-        std::min(THCRoundUp(slice_size, (int64_t)WARP_SIZE), (int64_t)1024));
+        std::min(THCRoundUp(slice_size, (int64_t)C10_WARP_SIZE), (int64_t)1024));
     auto stream = at::cuda::getCurrentCUDAStream();
     gatherKthValue<scalar_t, index_t, all_dims><<<grid, block, 0, stream>>>(
         self_info,
@@ -145,11 +146,11 @@ void kthvalue_cuda_template(
   // FIXME: This seems bogus, I only do this because it was the old behaviour.
   //        The reductions are fine, as long as the axis being reduced along
   //        isn't of 0 elements (and the output has elements).
-  AT_CHECK(
+  TORCH_CHECK(
       self.numel() > 0,
       "cannot perform reduction function kthvalue",
       " on tensor with no elements because the operation does not have an identity");
-  AT_CHECK(k >= 1 && k <= slicesize, "selected number k out of range");
+  TORCH_CHECK(k >= 1 && k <= slicesize, "selected number k out of range");
 
   _reduction_with_indices_allocate_or_resize_output(
       values, indices, self, dim, keepdim);
@@ -159,7 +160,7 @@ void kthvalue_cuda_template(
     return;
   }
 
-  AT_CHECK(
+  TORCH_CHECK(
       self.dim() <= MAX_TENSORINFO_DIMS,
       "cannot operate on more than ",
       MAX_TENSORINFO_DIMS,
@@ -188,14 +189,14 @@ void kthvalue_cuda_template(
 // this does not reduce to median with dim beause we don't want to copy twice
 template <typename scalar_t>
 Tensor median_cuda_template(const Tensor& self) {
-  AT_CHECK(self.numel() > 0, "median cannot be called with empty tensor");
+  TORCH_CHECK(self.numel() > 0, "median cannot be called with empty tensor");
   if (self.dim() == 0 && self.numel() == 1) {
-    return self.clone();
+    return self.clone(at::MemoryFormat::Contiguous);
   }
-  auto self_copy = self.clone().view(-1);
+  auto self_copy = self.clone(at::MemoryFormat::Contiguous).view(-1);
   auto values = at::empty({1}, self.options());
   auto indices = at::empty({1}, self.options().dtype(kLong));
-  AT_CHECK(
+  TORCH_CHECK(
       self.dim() <= MAX_TENSORINFO_DIMS,
       "cannot operate on more than ",
       MAX_TENSORINFO_DIMS,
@@ -225,7 +226,7 @@ Tensor median_cuda_template(const Tensor& self) {
 
 } // namespace
 
-std::tuple<Tensor&, Tensor&> kthvalue_out_cuda(
+static std::tuple<Tensor&, Tensor&> kthvalue_out_impl_cuda(
     Tensor& values,
     Tensor& indices,
     const Tensor& self,
@@ -238,7 +239,30 @@ std::tuple<Tensor&, Tensor&> kthvalue_out_cuda(
   return std::forward_as_tuple(values, indices);
 }
 
+std::tuple<Tensor&, Tensor&> kthvalue_out_cuda(
+    Tensor& values,
+    Tensor& indices,
+    const Tensor& self,
+    int64_t k,
+    int64_t dim,
+    bool keepdim) {
+  auto result = [&]() {
+#ifdef BUILD_NAMEDTENSOR
+    NoNamesGuard guard;
+#endif
+    return kthvalue_out_impl_cuda(values, indices, self, k, dim, keepdim);
+  }();
+#ifdef BUILD_NAMEDTENSOR
+  namedinference::propagate_names_for_reduction(values, self, dim, keepdim);
+  namedinference::propagate_names_for_reduction(indices, self, dim, keepdim);
+#endif
+  return result;
+}
+
 Tensor median_cuda(const Tensor& self) {
+#ifdef BUILD_NAMEDTENSOR
+  NoNamesGuard guard;
+#endif
   return AT_DISPATCH_ALL_TYPES_AND(at::ScalarType::Half, self.scalar_type(), "median", [&] {
     return median_cuda_template<scalar_t>(self);
   });

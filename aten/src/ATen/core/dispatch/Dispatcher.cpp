@@ -30,6 +30,8 @@ OpRegistrationListener::~OpRegistrationListener() {}
 
 Dispatcher::Dispatcher()
 : operators_()
+, operatorLookupTable_()
+, backendFallbackKernels_()
 , listeners_(guts::make_unique<detail::RegistrationListenerList>())
 , mutex_() {}
 
@@ -40,87 +42,113 @@ C10_EXPORT Dispatcher& Dispatcher::singleton() {
   return _singleton;
 }
 
-c10::optional<OperatorHandle> Dispatcher::findSchema(const char* operator_name, const char* overload_name) {
-  const auto found = std::find_if(operators_.begin(), operators_.end(), [&] (const OperatorDef& opDef) {
-    return opDef.schema.name() == operator_name && opDef.schema.overload_name() == overload_name;
+c10::optional<OperatorHandle> Dispatcher::findSchema(const OperatorName& overload_name) {
+  return operatorLookupTable_.read([&] (const ska::flat_hash_map<OperatorName, OperatorHandle>& operatorLookupTable) -> c10::optional<OperatorHandle> {
+    auto found = operatorLookupTable.find(overload_name);
+    if (found == operatorLookupTable.end()) {
+      return c10::nullopt;
+    }
+    return found->second;
   });
-
-  if (found == operators_.end()) {
-    return c10::nullopt;
-  }
-
-  return OperatorHandle(found);
 }
 
-OperatorHandle Dispatcher::findOrRegisterSchema_(FunctionSchema&& schema) {
-  const auto found = findSchema(schema.name().c_str(), schema.overload_name().c_str());
+OperatorHandle Dispatcher::findOrRegisterSchema_(FunctionSchema&& schema, OperatorOptions&& options) {
+  const auto found = findSchema(schema.operator_name());
   if (found != c10::nullopt) {
     if (found->schema() != schema) {
       std::ostringstream str;
       str << schema << " vs " << found->schema();
-      AT_ERROR("Tried to register multiple operators with the same name and the same overload name but different schemas: ", str.str());
+      TORCH_CHECK(false, "Tried to register multiple operators with the same name and the same overload name but different schemas: ", str.str());
+    }
+    if (options.isDefaultAliasAnalysisKind()) {
+      // just do nothing and let it pass.
+    } else if (found->options().isDefaultAliasAnalysisKind()) {
+      found->operatorIterator_->op.updateOptionsAliasAnalysis(options.aliasAnalysis());
+    } else {
+      TORCH_CHECK(
+        found->options() == options,
+        "Tried to register multiple operators with the same schema but different options: ", toString(schema));
     }
     return *found;
   }
 
-  operators_.emplace_back(std::move(schema));
-  return OperatorHandle(--operators_.end());
+  OperatorName op_name = schema.operator_name();
+  operators_.emplace_back(std::move(schema), std::move(options));
+  OperatorHandle handle(--operators_.end());
+  operatorLookupTable_.write([&] (ska::flat_hash_map<OperatorName, OperatorHandle>& operatorLookupTable) {
+    operatorLookupTable.emplace(op_name, handle);
+  });
+
+  return handle;
 }
 
-OperatorHandle Dispatcher::registerSchema(FunctionSchema schema) {
+std::pair<RegistrationHandleRAII, OperatorHandle> Dispatcher::registerSchema(FunctionSchema schema, OperatorOptions options) {
   // we need a lock to avoid concurrent writes
   std::lock_guard<std::mutex> lock(mutex_);
 
-  auto op = findOrRegisterSchema_(std::move(schema));
+  OperatorName op_name = schema.operator_name();
 
-  ++op.operatorDefIterator_->refcount;
-  if (1 == op.operatorDefIterator_->refcount) {
+  auto op = findOrRegisterSchema_(std::move(schema), std::move(options));
+
+  ++op.operatorIterator_->refcount;
+  if (1 == op.operatorIterator_->refcount) {
     // note: call listeners *after* operator is added, i.e. dispatcher is already valid for new op
     listeners_->callOnOperatorRegistered(op);
   }
 
-  return op;
+  return std::make_pair(RegistrationHandleRAII([this, op, op_name] {
+    deregisterSchema_(op, op_name);
+  }), op);
 }
 
-void Dispatcher::deregisterSchema(const OperatorHandle& op) {
+void Dispatcher::deregisterSchema_(const OperatorHandle& op, const OperatorName& op_name) {
   // we need a lock to avoid concurrent writes
   std::lock_guard<std::mutex> lock(mutex_);
 
+  TORCH_INTERNAL_ASSERT(op.schema().operator_name() == op_name);
+
   // reduce refcount and actually deregister if no references left
-  AT_ASSERT(op.operatorDefIterator_->refcount > 0);
-  --op.operatorDefIterator_->refcount;
-  if (0 == op.operatorDefIterator_->refcount) {
-    if (!op.operatorDefIterator_->dispatchTable.isEmpty()) {
-      std::ostringstream str;
-      str << op.schema();
-      AT_ERROR("Tried to deregister op schema for an operator that still has kernels registered. The operator schema is ", str.str());
-    }
+  TORCH_INTERNAL_ASSERT(op.operatorIterator_->refcount > 0);
+  --op.operatorIterator_->refcount;
+  if (0 == op.operatorIterator_->refcount) {
+    op.operatorIterator_->op.prepareForDeregistration();
 
     // note: call listeners *before* operator is removed, i.e. dispatcher is still valid for removed op
     listeners_->callOnOperatorDeregistered(op);
 
-    operators_.erase(op.operatorDefIterator_);
+    operators_.erase(op.operatorIterator_);
+    operatorLookupTable_.write([&] (ska::flat_hash_map<OperatorName, OperatorHandle>& operatorLookupTable) {
+      operatorLookupTable.erase(op_name);
+    });
   }
 }
 
-void Dispatcher::registerKernel(const OperatorHandle& op, TensorTypeId dispatch_key, KernelFunction* kernel_func, KernelCacheCreatorFunction cache_creator_func) {
-  // note: this doesn't need the mutex because write operations on the list keep iterators intact.
-  op.operatorDefIterator_->dispatchTable.registerKernel(std::move(dispatch_key), DispatchTableEntry{kernel_func, std::move(cache_creator_func)});
+RegistrationHandleRAII Dispatcher::registerBackendFallbackKernel(TensorTypeId dispatchKey, KernelFunction kernel) {
+  backendFallbackKernels_.write([&] (ska::flat_hash_map<TensorTypeId, KernelFunction>& backendFallbackKernels) {
+    auto inserted = backendFallbackKernels.emplace(dispatchKey, std::move(kernel));
+    TORCH_CHECK(inserted.second, "Tried to register a backend fallback kernel for ", dispatchKey, " but there was already one registered.");
+  });
+
+  return RegistrationHandleRAII([this, dispatchKey] {
+    deregisterBackendFallbackKernel_(dispatchKey);
+  });
 }
 
-void Dispatcher::deregisterKernel(const OperatorHandle& op, TensorTypeId dispatch_key) {
-  // note: this doesn't need the mutex because write operations on the list keep iterators intact.
-  op.operatorDefIterator_->dispatchTable.deregisterKernel(std::move(dispatch_key));
+void Dispatcher::deregisterBackendFallbackKernel_(TensorTypeId dispatchKey) {
+  backendFallbackKernels_.write([&] (ska::flat_hash_map<TensorTypeId, KernelFunction>& backendFallbackKernels) {
+    size_t numRemoved = backendFallbackKernels.erase(dispatchKey);
+    TORCH_INTERNAL_ASSERT(1 == numRemoved, "Tried to deregister a backend fallback kernel for ", dispatchKey, " but there was none registered.");
+  });
 }
 
-void Dispatcher::registerFallbackKernel(const OperatorHandle& op, KernelFunction* kernel_func, KernelCacheCreatorFunction cache_creator_func) {
-  // note: this doesn't need the mutex because write operations on the list keep iterators intact.
-  op.operatorDefIterator_->dispatchTable.registerFallbackKernel(DispatchTableEntry{kernel_func, std::move(cache_creator_func)});
+RegistrationHandleRAII Dispatcher::registerKernel(const OperatorHandle& op, TensorTypeId dispatch_key, KernelFunction kernel) {
+  // note: this doesn't need the mutex to protect the iterator because write operations on the list keep iterators intact.
+  return op.operatorIterator_->op.registerKernel(std::move(dispatch_key), std::move(kernel));
 }
 
-void Dispatcher::deregisterFallbackKernel(const OperatorHandle& op) {
-  // note: this doesn't need the mutex because write operations on the list keep iterators intact.
-  op.operatorDefIterator_->dispatchTable.deregisterFallbackKernel();
+RegistrationHandleRAII Dispatcher::registerCatchallKernel(const OperatorHandle& op, KernelFunction kernel) {
+  // note: this doesn't need the mutex to protect the iterator because write operations on the list keep iterators intact.
+  return op.operatorIterator_->op.registerCatchallKernel(std::move(kernel));
 }
 
 void Dispatcher::addRegistrationListener(std::unique_ptr<OpRegistrationListener> listener) {
