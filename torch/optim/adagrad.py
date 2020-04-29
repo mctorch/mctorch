@@ -72,13 +72,13 @@ class Adagrad(Optimizer):
 
                 state['step'] += 1
 
+                clr = group['lr'] / (1 + (state['step'] - 1) * group['lr_decay'])
                 if not hasattr(p, 'manifold') or p.manifold is None:
                     if group['weight_decay'] != 0:
                         if p.grad.is_sparse:
                             raise RuntimeError("weight_decay option is not compatible with sparse gradients")
                         grad = grad.add(p, alpha=group['weight_decay'])
 
-                    clr = group['lr'] / (1 + (state['step'] - 1) * group['lr_decay'])
 
                     if grad.is_sparse:
                         grad = grad.coalesce()  # the update is non-linear so indices must be unique
