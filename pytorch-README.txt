@@ -109,20 +109,20 @@ If you are installing from source, we highly recommend installing an Anaconda en
 - Download  anaconda installer from here - [Anaconda](https://www.anaconda.com/download/) and follow GUI steps to install
 - Create an environment, from anaconda console prompt: ```conda create -n myenv python=3.7```
 - Activate the environment: ```source activate myenv```
-- Install current release branch i.e. ```mctorch_1_1```
+- Install current release branch i.e. ```mctorch_1_5```
 
 ### Linux
 ```bash
 source activate myenv
 conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
-pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_1
+pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_5
 ```
 
 ### Mac OS
 ```bash
 source activate myenv
 conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
-MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_1
+MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_5
 ```
 
 ### Installation FAQs
