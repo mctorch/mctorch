@@ -81,6 +81,8 @@ cost = mlp_module(inputs)
 
 ```
 
+More examples added - [here](examples)
+
 ## Functionality Supported
 This would be an ever increasing list of features. McTorch currently supports:
 
@@ -115,6 +117,8 @@ If you are installing from source, we highly recommend installing an Anaconda en
 ```bash
 source activate myenv
 conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
+# Add LAPACK support for the GPU if needed
+conda install -c pytorch magma-cuda90 # or [magma-cuda80 | magma-cuda92 | magma-cuda100 ] depending on your cuda version
 pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_5
 ```
 
