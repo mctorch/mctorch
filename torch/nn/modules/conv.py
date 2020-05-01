@@ -46,6 +46,7 @@ class _ConvNd(Module):
         self._padding_repeated_twice = _repeat_tuple(self.padding, 2)
         self.weight_manifold = weight_manifold
         self.transpose_flag = transpose_flag
+        self.weight_transform = lambda x : x
         self._init_weight_matrix()
 
         if bias:
@@ -59,7 +60,7 @@ class _ConvNd(Module):
         if self.weight_manifold is None:
             init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         else:
-            init.manifold_random_(self._weight)
+            init.manifold_random_(self.weight)
         if self.bias is not None:
             fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
@@ -73,6 +74,7 @@ class _ConvNd(Module):
             else:
                 self.weight = Parameter(torch.Tensor(
                     self.out_channels, self.in_channels // self.groups, *self.kernel_size))
+
         else:
             kernel_mult = multiply_tuple(self.kernel_size)
             if self.transposed:
@@ -82,12 +84,12 @@ class _ConvNd(Module):
                 weight_shape = (self.out_channels, (self.in_channels // self.groups) * kernel_mult)
                 kernel_shape = (self.out_channels, self.in_channels // self.groups, *self.kernel_size)
 
-            self.transpose_flag, self._weight = create_manifold_parameter(
+            self.transpose_flag, self.weight = create_manifold_parameter(
                 self.weight_manifold, weight_shape, self.transpose_flag)
             if self.transpose_flag:
-                self.weight = self._weight.transpose(-2, -1).view(*kernel_shape)
+                self.weight_transform = lambda x : x.transpose(-2,-1).view(*kernel_shape)
             else:
-                self.weight = self._weight.view(*kernel_shape)
+                self.weight_transform = lambda x : x.view(*kernel_shape)
 
     def extra_repr(self):
         s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'
@@ -237,9 +239,9 @@ class Conv1d(_ConvNd):
     def forward(self, input):
         if self.padding_mode != 'zeros':
             return F.conv1d(F.pad(input, self._padding_repeated_twice, mode=self.padding_mode),
-                            self.weight, self.bias, self.stride,
+                            self.weight_transform(self.weight), self.bias, self.stride,
                             _single(0), self.dilation, self.groups)
-        return F.conv1d(input, self.weight, self.bias, self.stride,
+        return F.conv1d(input, self.weight_transform(self.weight), self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
 
@@ -386,7 +388,7 @@ class Conv2d(_ConvNd):
                         self.padding, self.dilation, self.groups)
 
     def forward(self, input):
-        return self._conv_forward(input, self.weight)
+        return self._conv_forward(input, self.weight_transform(self.weight))
 
 class Conv3d(_ConvNd):
     r"""Applies a 3D convolution over an input signal composed of several input
@@ -520,9 +522,9 @@ class Conv3d(_ConvNd):
     def forward(self, input):
         if self.padding_mode != 'zeros':
             return F.conv3d(F.pad(input, self._padding_repeated_twice, mode=self.padding_mode),
-                            self.weight, self.bias, self.stride, _triple(0),
+                            self.weight_transform(self.weight), self.bias, self.stride, _triple(0),
                             self.dilation, self.groups)
-        return F.conv3d(input, self.weight, self.bias, self.stride,
+        return F.conv3d(input, self.weight_transform(self.weight), self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
 
@@ -689,7 +691,7 @@ class ConvTranspose1d(_ConvTransposeNd):
 
         output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
         return F.conv_transpose1d(
-            input, self.weight, self.bias, self.stride, self.padding,
+            input, self.weight_transform(self.weight), self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
 
@@ -841,7 +843,7 @@ class ConvTranspose2d(_ConvTransposeNd):
         output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
 
         return F.conv_transpose2d(
-            input, self.weight, self.bias, self.stride, self.padding,
+            input, self.weight_transform(self.weight), self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
 
@@ -989,7 +991,7 @@ class ConvTranspose3d(_ConvTransposeNd):
         output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
 
         return F.conv_transpose3d(
-            input, self.weight, self.bias, self.stride, self.padding,
+            input, self.weight_transform(self.weight), self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
 
