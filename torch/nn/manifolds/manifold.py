@@ -1,6 +1,3 @@
-import torch
-
-
 class Manifold(object):
     """
     Base class for manifold constraints

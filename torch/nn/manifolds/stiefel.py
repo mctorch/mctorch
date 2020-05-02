@@ -72,14 +72,14 @@ class Stiefel(Manifold):
             q, r = torch.qr(X + G)
             # Unflip any flipped signs
             XNew = torch.matmul(q, torch.diag(
-                torch.sign(torch.sign(torch.diag(r))+.5)))
+                torch.sign(torch.sign(torch.diag(r)) + .5)))
         else:
             XNew = X + G
             # TODO: update with batch implementation
             for i in range(self._k):
                 q, r = torch.qr(XNew[i])
                 XNew[i] = torch.matmul(q, torch.diag(
-                    torch.sign(torch.sign(torch.diag(r))+.5)))
+                    torch.sign(torch.sign(torch.diag(r)) + .5)))
         return XNew
 
     def ehess2rhess(self, X, egrad, ehess, H):

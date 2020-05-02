@@ -26,8 +26,7 @@ class ManifoldShapeFactory(object):
     def create_manifold_parameter(manifold, shape, transpose=False):
         if manifold not in ManifoldShapeFactory.factories:
             raise NotImplementedError
-        return ManifoldShapeFactory.factories[manifold].create(
-                                                    shape, transpose)
+        return ManifoldShapeFactory.factories[manifold].create(shape, transpose)
 
     def __init__(self, manifold):
         self.manifold = manifold

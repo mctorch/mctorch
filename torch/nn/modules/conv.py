@@ -87,7 +87,7 @@ class _ConvNd(Module):
             self.transpose_flag, self.weight = create_manifold_parameter(
                 self.weight_manifold, weight_shape, self.transpose_flag)
             if self.transpose_flag:
-                self.weight_transform = lambda x : x.transpose(-2,-1).view(*kernel_shape)
+                self.weight_transform = lambda x : x.transpose(-2, -1).view(*kernel_shape)
             else:
                 self.weight_transform = lambda x : x.view(*kernel_shape)
 
