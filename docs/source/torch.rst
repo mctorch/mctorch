@@ -55,6 +55,7 @@ Creation Ops
 .. autofunction:: full_like
 .. autofunction:: quantize_per_tensor
 .. autofunction:: quantize_per_channel
+.. autofunction:: dequantize
 
 Indexing, Slicing, Joining, Mutating Ops
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -193,6 +194,7 @@ Pointwise Ops
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. autofunction:: abs
+.. autofunction:: absolute
 .. autofunction:: acos
 .. autofunction:: add
 .. autofunction:: addcdiv
@@ -282,6 +284,7 @@ Comparison Ops
 .. autofunction:: equal
 .. autofunction:: ge
 .. autofunction:: gt
+.. autofunction:: isclose
 .. autofunction:: isfinite
 .. autofunction:: isinf
 .. autofunction:: isnan
@@ -302,6 +305,7 @@ Spectral Ops
 .. autofunction:: rfft
 .. autofunction:: irfft
 .. autofunction:: stft
+.. autofunction:: istft
 .. autofunction:: bartlett_window
 .. autofunction:: blackman_window
 .. autofunction:: hamming_window
@@ -311,6 +315,7 @@ Spectral Ops
 Other Operations
 ~~~~~~~~~~~~~~~~~~~~~~
 .. autofunction:: bincount
+.. autofunction:: block_diag
 .. autofunction:: broadcast_tensors
 .. autofunction:: cartesian_prod
 .. autofunction:: cdist
@@ -339,6 +344,7 @@ Other Operations
 .. autofunction:: tril_indices
 .. autofunction:: triu
 .. autofunction:: triu_indices
+.. autofunction:: vander
 
 
 BLAS and LAPACK Operations

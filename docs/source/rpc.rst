@@ -1,3 +1,5 @@
+:orphan:
+
 .. _distributed-rpc-framework:
 
 Distributed RPC Framework
@@ -8,6 +10,9 @@ training through a set of primitives to allow for remote communication, and a
 higher-level API to automatically differentiate models split across several
 machines.
 
+.. warning ::
+     APIs in the RPC package are stable. There are multiple ongoing work items
+     to improve performance and error handling, which will ship in future releases.
 
 
 Basics

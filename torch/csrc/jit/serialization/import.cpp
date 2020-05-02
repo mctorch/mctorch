@@ -1,22 +1,23 @@
+#include <torch/csrc/jit/serialization/import.h>
 #include <ATen/core/functional.h>
 #include <c10/util/Exception.h>
-#include <torch/csrc/jit/serialization/import.h>
 #include <torch/csrc/jit/serialization/import_export_helpers.h>
 #ifndef C10_MOBILE
 #include <torch/csrc/jit/serialization/import_legacy.h>
 #endif
-#include <torch/csrc/jit/serialization/import_source.h>
-#include <torch/csrc/jit/ir/ir.h>
-#include <torch/csrc/jit/serialization/pickle.h>
-#include <torch/csrc/jit/serialization/unpickler.h>
 #include <torch/csrc/jit/frontend/script_type_parser.h>
+#include <torch/csrc/jit/ir/ir.h>
+#include <torch/csrc/jit/serialization/import_source.h>
+#include <torch/csrc/jit/serialization/pickle.h>
 #include <torch/csrc/jit/serialization/source_range_serialization.h>
+#include <torch/csrc/jit/serialization/unpickler.h>
 
-#include "caffe2/serialize/file_adapter.h"
-#include "caffe2/serialize/inline_container.h"
-#include "caffe2/serialize/istream_adapter.h"
+#include <caffe2/serialize/file_adapter.h>
+#include <caffe2/serialize/inline_container.h>
+#include <caffe2/serialize/istream_adapter.h>
 
 #include <ATen/ATen.h>
+#include <fmt/format.h>
 
 #include <fstream>
 #include <string>
@@ -44,12 +45,11 @@ void postSetStateValidate(const IValue& v) {
     if (attrType->kind() != TypeKind::OptionalType) {
       TORCH_CHECK(
           !slot.isNone(),
-          "The field '",
-          attrName,
-          "' was left unitialized after __setstate__, but expected a ",
-          "value of type '",
-          attrType->python_str(),
-          "'");
+          fmt::format(
+              "The field '{}' was left uninitialized after '__setstate__', "
+              "but expected a value of type '{}'",
+              attrName,
+              attrType->python_str()));
     }
   }
 }
@@ -97,7 +97,6 @@ IValue readArchiveAndTensors(
 
 namespace {
 
-
 // This is a deserializer class which loads script modules from pt files.
 // Content of the file is written using PyTorchStreamWriter, for details please
 // check caffe2/serialize/inline_container.h.
@@ -136,7 +135,7 @@ class ScriptModuleDeserializer final {
 
 IValue ScriptModuleDeserializer::readArchive(const std::string& archive_name) {
   auto type_resolver = [&](const c10::QualifiedName& qn) {
-    auto cls = source_importer_.loadNamedType(qn)->expect<ClassType>();
+    auto cls = source_importer_.loadType(qn);
     return c10::StrongTypePtr(compilation_unit_, std::move(cls));
   };
 
@@ -247,8 +246,7 @@ Module load(
     std::istream& in,
     c10::optional<at::Device> device,
     ExtraFilesMap& extra_files) {
-  std::unique_ptr<IStreamAdapter> rai =
-      std::make_unique<IStreamAdapter>(&in);
+  std::unique_ptr<IStreamAdapter> rai = std::make_unique<IStreamAdapter>(&in);
   auto module = load(std::move(rai), device, extra_files);
   return module;
 }
