@@ -38,6 +38,10 @@ class Linear(Module):
         out_features: size of each output sample
         bias: If set to ``False``, the layer will not learn an additive bias.
             Default: ``True``
+        weight_manifold: If set then weigh tensor parameter will be constrained
+            to specified Manifold
+        transpose_flag: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, *, H_{in})` where :math:`*` means any number of
@@ -50,6 +54,8 @@ class Linear(Module):
             :math:`(\text{out\_features}, \text{in\_features})`. The values are
             initialized from :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where
             :math:`k = \frac{1}{\text{in\_features}}`
+            In case when manifold is set weight is constrained to manifold 
+            constraints and intialized randomly on the manifold space
         bias:   the learnable bias of the module of shape :math:`(\text{out\_features})`.
                 If :attr:`bias` is ``True``, the values are initialized from
                 :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})` where
@@ -65,11 +71,24 @@ class Linear(Module):
     """
     __constants__ = ['in_features', 'out_features']
 
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, bias=True,
+                 weight_manifold=None, transpose_flag=False):
         super(Linear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = Parameter(torch.Tensor(out_features, in_features))
+        self.weight_manifold = weight_manifold
+        self.transpose_flag = transpose_flag
+
+        self.weight_transform = lambda x : x
+
+        if weight_manifold is None:
+            self.weight = Parameter(torch.Tensor(out_features, in_features))
+        else:
+            self.transpose_flag, self.weight = create_manifold_parameter(
+                weight_manifold, (out_features, in_features), transpose_flag)
+            if self.transpose_flag:
+                self.weight_transform = lambda x : x.transpose(-2,-1)
+
         if bias:
             self.bias = Parameter(torch.Tensor(out_features))
         else:
@@ -77,14 +96,18 @@ class Linear(Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.weight_manifold is None:
+            init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        else:
+            init.manifold_random_(self.weight)
+
         if self.bias is not None:
-            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight_transform(self.weight))
             bound = 1 / math.sqrt(fan_in)
             init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input):
-        return F.linear(input, self.weight, self.bias)
+        return F.linear(input, self.weight_transform(self.weight), self.bias)
 
     def extra_repr(self):
         return 'in_features={}, out_features={}, bias={}'.format(

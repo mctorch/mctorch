@@ -8,20 +8,22 @@ from torch.nn.parameter import Parameter
 from .. import functional as F
 from .. import init
 from .module import Module
-from .utils import _single, _pair, _triple, _repeat_tuple
+from .utils import _single, _pair, _triple, _repeat_tuple, multiply_tuple
 from ..._jit_internal import List, Optional
+from ..manifolds import create_manifold_parameter
 
 
 class _ConvNd(Module):
 
     __constants__ = ['stride', 'padding', 'dilation', 'groups',
                      'padding_mode', 'output_padding', 'in_channels',
-                     'out_channels', 'kernel_size']
+                     'out_channels', 'kernel_size', 'weight_manifold', 
+                     'transpose_flag']
     __annotations__ = {'bias': Optional[torch.Tensor]}
 
     def __init__(self, in_channels, out_channels, kernel_size, stride,
                  padding, dilation, transposed, output_padding,
-                 groups, bias, padding_mode):
+                 groups, bias, padding_mode, weight_manifold, transpose_flag):
         super(_ConvNd, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -42,12 +44,11 @@ class _ConvNd(Module):
         self.groups = groups
         self.padding_mode = padding_mode
         self._padding_repeated_twice = _repeat_tuple(self.padding, 2)
-        if transposed:
-            self.weight = Parameter(torch.Tensor(
-                in_channels, out_channels // groups, *kernel_size))
-        else:
-            self.weight = Parameter(torch.Tensor(
-                out_channels, in_channels // groups, *kernel_size))
+        self.weight_manifold = weight_manifold
+        self.transpose_flag = transpose_flag
+        self.weight_transform = lambda x : x
+        self._init_weight_matrix()
+
         if bias:
             self.bias = Parameter(torch.Tensor(out_channels))
         else:
@@ -55,11 +56,40 @@ class _ConvNd(Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        n = self.in_channels
+        if self.weight_manifold is None:
+            init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        else:
+            init.manifold_random_(self.weight)
         if self.bias is not None:
             fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
             init.uniform_(self.bias, -bound, bound)
+
+    def _init_weight_matrix(self):
+        if self.weight_manifold is None:
+            if self.transposed:
+                self.weight = Parameter(torch.Tensor(
+                    self.in_channels, self.out_channels // self.groups, *self.kernel_size))
+            else:
+                self.weight = Parameter(torch.Tensor(
+                    self.out_channels, self.in_channels // self.groups, *self.kernel_size))
+
+        else:
+            kernel_mult = multiply_tuple(self.kernel_size)
+            if self.transposed:
+                weight_shape = (self.in_channels, (self.out_channels // self.groups) * kernel_mult)
+                kernel_shape = (self.in_channels, self.out_channels // self.groups, *self.kernel_size)
+            else:
+                weight_shape = (self.out_channels, (self.in_channels // self.groups) * kernel_mult)
+                kernel_shape = (self.out_channels, self.in_channels // self.groups, *self.kernel_size)
+
+            self.transpose_flag, self.weight = create_manifold_parameter(
+                self.weight_manifold, weight_shape, self.transpose_flag)
+            if self.transpose_flag:
+                self.weight_transform = lambda x : x.transpose(-2,-1).view(*kernel_shape)
+            else:
+                self.weight_transform = lambda x : x.view(*kernel_shape)
 
     def extra_repr(self):
         s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'
@@ -157,6 +187,11 @@ class Conv1d(_ConvNd):
         groups (int, optional): Number of blocked connections from input
             channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `in_channels * (out_channels * kernel_size)` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, L_{in})`
@@ -192,21 +227,21 @@ class Conv1d(_ConvNd):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, dilation=1, groups=1,
-                 bias=True, padding_mode='zeros'):
+                 bias=True, padding_mode='zeros', weight_manifold=None, transpose_flag=False):
         kernel_size = _single(kernel_size)
         stride = _single(stride)
         padding = _single(padding)
         dilation = _single(dilation)
         super(Conv1d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            False, _single(0), groups, bias, padding_mode)
+            False, _single(0), groups, bias, padding_mode, weight_manifold, transpose_flag)
 
     def forward(self, input):
         if self.padding_mode != 'zeros':
             return F.conv1d(F.pad(input, self._padding_repeated_twice, mode=self.padding_mode),
-                            self.weight, self.bias, self.stride,
+                            self.weight_transform(self.weight), self.bias, self.stride,
                             _single(0), self.dilation, self.groups)
-        return F.conv1d(input, self.weight, self.bias, self.stride,
+        return F.conv1d(input, self.weight_transform(self.weight), self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
 
@@ -286,6 +321,11 @@ class Conv2d(_ConvNd):
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `in_channels * (out_channels * ks[0] *ks[1])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, H_{in}, W_{in})`
@@ -330,14 +370,14 @@ class Conv2d(_ConvNd):
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, dilation=1, groups=1,
-                 bias=True, padding_mode='zeros'):
+                 bias=True, padding_mode='zeros', weight_manifold=None, transpose_flag=False):
         kernel_size = _pair(kernel_size)
         stride = _pair(stride)
         padding = _pair(padding)
         dilation = _pair(dilation)
         super(Conv2d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            False, _pair(0), groups, bias, padding_mode)
+            False, _pair(0), groups, bias, padding_mode, weight_manifold, transpose_flag)
 
     def _conv_forward(self, input, weight):
         if self.padding_mode != 'zeros':
@@ -348,7 +388,7 @@ class Conv2d(_ConvNd):
                         self.padding, self.dilation, self.groups)
 
     def forward(self, input):
-        return self._conv_forward(input, self.weight)
+        return self._conv_forward(input, self.weight_transform(self.weight))
 
 class Conv3d(_ConvNd):
     r"""Applies a 3D convolution over an input signal composed of several input
@@ -419,6 +459,11 @@ class Conv3d(_ConvNd):
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `in_channels * (out_channels * ks[0] * ks[1] * ks[2])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`
@@ -465,21 +510,21 @@ class Conv3d(_ConvNd):
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, dilation=1, groups=1,
-                 bias=True, padding_mode='zeros'):
+                 bias=True, padding_mode='zeros', weight_manifold=None, transpose_flag=False):
         kernel_size = _triple(kernel_size)
         stride = _triple(stride)
         padding = _triple(padding)
         dilation = _triple(dilation)
         super(Conv3d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            False, _triple(0), groups, bias, padding_mode)
+            False, _triple(0), groups, bias, padding_mode, weight_manifold, transpose_flag)
 
     def forward(self, input):
         if self.padding_mode != 'zeros':
             return F.conv3d(F.pad(input, self._padding_repeated_twice, mode=self.padding_mode),
-                            self.weight, self.bias, self.stride, _triple(0),
+                            self.weight_transform(self.weight), self.bias, self.stride, _triple(0),
                             self.dilation, self.groups)
-        return F.conv3d(input, self.weight, self.bias, self.stride,
+        return F.conv3d(input, self.weight_transform(self.weight), self.bias, self.stride,
                         self.padding, self.dilation, self.groups)
 
 
@@ -600,6 +645,11 @@ class ConvTranspose1d(_ConvTransposeNd):
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `out_channels * (in_channels * kernel_size)` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, L_{in})`
@@ -624,7 +674,7 @@ class ConvTranspose1d(_ConvTransposeNd):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, output_padding=0, groups=1, bias=True,
-                 dilation=1, padding_mode='zeros'):
+                 dilation=1, padding_mode='zeros', weight_manifold=None, transpose_flag=False):
         kernel_size = _single(kernel_size)
         stride = _single(stride)
         padding = _single(padding)
@@ -632,7 +682,7 @@ class ConvTranspose1d(_ConvTransposeNd):
         output_padding = _single(output_padding)
         super(ConvTranspose1d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            True, output_padding, groups, bias, padding_mode)
+            True, output_padding, groups, bias, padding_mode, weight_manifold, transpose_flag)
 
     def forward(self, input, output_size=None):
         # type: (Tensor, Optional[List[int]]) -> Tensor
@@ -641,7 +691,7 @@ class ConvTranspose1d(_ConvTransposeNd):
 
         output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
         return F.conv_transpose1d(
-            input, self.weight, self.bias, self.stride, self.padding,
+            input, self.weight_transform(self.weight), self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
 
@@ -718,6 +768,11 @@ class ConvTranspose2d(_ConvTransposeNd):
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `out_channels * (in_channels * ks[0] * ks[1])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, H_{in}, W_{in})`
@@ -770,7 +825,7 @@ class ConvTranspose2d(_ConvTransposeNd):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, output_padding=0, groups=1, bias=True,
-                 dilation=1, padding_mode='zeros'):
+                 dilation=1, padding_mode='zeros', weight_manifold=None, transpose_flag=False):
         kernel_size = _pair(kernel_size)
         stride = _pair(stride)
         padding = _pair(padding)
@@ -778,7 +833,7 @@ class ConvTranspose2d(_ConvTransposeNd):
         output_padding = _pair(output_padding)
         super(ConvTranspose2d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            True, output_padding, groups, bias, padding_mode)
+            True, output_padding, groups, bias, padding_mode, weight_manifold, transpose_flag)
 
     def forward(self, input, output_size=None):
         # type: (Tensor, Optional[List[int]]) -> Tensor
@@ -788,7 +843,7 @@ class ConvTranspose2d(_ConvTransposeNd):
         output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
 
         return F.conv_transpose2d(
-            input, self.weight, self.bias, self.stride, self.padding,
+            input, self.weight_transform(self.weight), self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
 
@@ -867,6 +922,11 @@ class ConvTranspose3d(_ConvTransposeNd):
         groups (int, optional): Number of blocked connections from input channels to output channels. Default: 1
         bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``True``
         dilation (int or tuple, optional): Spacing between kernel elements. Default: 1
+        weight_manifold: If set convolution weight matrix is constrained on manifold space. 
+            weight_manifold shape is `out_channels * (in_channels * ks[0] * ks[1] * ks[2])` 
+            or transpose of it.
+        trnaspose_flas: This is used only when weight_manifold shape is vague
+            Default: ``False``
 
     Shape:
         - Input: :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`
@@ -913,7 +973,7 @@ class ConvTranspose3d(_ConvTransposeNd):
 
     def __init__(self, in_channels, out_channels, kernel_size, stride=1,
                  padding=0, output_padding=0, groups=1, bias=True,
-                 dilation=1, padding_mode='zeros'):
+                 dilation=1, padding_mode='zeros', weight_manifold=None, transpose_flag=False):
         kernel_size = _triple(kernel_size)
         stride = _triple(stride)
         padding = _triple(padding)
@@ -921,7 +981,7 @@ class ConvTranspose3d(_ConvTransposeNd):
         output_padding = _triple(output_padding)
         super(ConvTranspose3d, self).__init__(
             in_channels, out_channels, kernel_size, stride, padding, dilation,
-            True, output_padding, groups, bias, padding_mode)
+            True, output_padding, groups, bias, padding_mode, weight_manifold, transpose_flag)
 
     def forward(self, input, output_size=None):
         # type: (Tensor, Optional[List[int]]) -> Tensor
@@ -931,7 +991,7 @@ class ConvTranspose3d(_ConvTransposeNd):
         output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
 
         return F.conv_transpose3d(
-            input, self.weight, self.bias, self.stride, self.padding,
+            input, self.weight_transform(self.weight), self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
 
