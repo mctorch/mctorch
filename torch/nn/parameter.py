@@ -1,7 +1,6 @@
 import torch
 import weakref
 from collections import OrderedDict
-import weakref
 
 
 class Parameter(torch.Tensor):
