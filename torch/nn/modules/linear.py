@@ -5,6 +5,7 @@ from torch.nn.parameter import Parameter
 from .. import functional as F
 from .. import init
 from .module import Module
+from ..manifolds import create_manifold_parameter
 
 
 class Identity(Module):

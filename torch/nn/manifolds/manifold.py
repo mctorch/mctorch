@@ -4,6 +4,11 @@ import torch
 class Manifold(object):
     """
     Base class for manifold constraints
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+=======
+>>>>>>> master
 
     All manifolds should subclass this class:
 
@@ -21,6 +26,10 @@ class Manifold(object):
 
     All functions should be converted to torch counterparts.
 
+<<<<<<< HEAD
+>>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
+=======
+>>>>>>> master
     """
 
     def __init__(self):

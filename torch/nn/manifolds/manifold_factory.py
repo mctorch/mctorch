@@ -3,7 +3,10 @@ from .positive_definite import PositiveDefinite
 from .euclidean import Euclidean
 from ..parameter import Parameter
 
+<<<<<<< HEAD
+=======
 
+>>>>>>> master
 class ManifoldShapeFactory(object):
     """
     Base class for manifold shape factory. This is used by torch

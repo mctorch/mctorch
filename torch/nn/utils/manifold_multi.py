@@ -2,7 +2,14 @@ import torch
 
 
 def multiprod(A, B):
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
     # Added just to be parallel to manopt/pymanopt implemenetation
+>>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
+=======
+    # Added just to be parallel to manopt/pymanopt implemenetation
+>>>>>>> master
     return torch.matmul(A, B)
 
 
@@ -20,4 +27,12 @@ def multisym(A):
 
 def multiskew(A):
     # Inspired by MATLAB multiskew function by Nicholas Boumal.
+<<<<<<< HEAD
+<<<<<<< HEAD
     return 0.5 * (A - multitransp(A))
+=======
+    return 0.5 * (A - multitransp(A))
+>>>>>>> 508a178... updated documentation strings and fixed stiefel factory bug
+=======
+    return 0.5 * (A - multitransp(A))
+>>>>>>> master
