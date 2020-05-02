@@ -88,7 +88,7 @@ class Linear(Module):
             self.transpose_flag, self.weight = create_manifold_parameter(
                 weight_manifold, (out_features, in_features), transpose_flag)
             if self.transpose_flag:
-                self.weight_transform = lambda x : x.transpose(-2,-1)
+                self.weight_transform = lambda x : x.transpose(-2, -1)
 
         if bias:
             self.bias = Parameter(torch.Tensor(out_features))

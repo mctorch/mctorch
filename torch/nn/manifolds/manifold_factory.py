@@ -3,10 +3,6 @@ from .positive_definite import PositiveDefinite
 from .euclidean import Euclidean
 from ..parameter import Parameter
 
-<<<<<<< HEAD
-=======
-
->>>>>>> master
 class ManifoldShapeFactory(object):
     """
     Base class for manifold shape factory. This is used by torch
@@ -30,8 +26,7 @@ class ManifoldShapeFactory(object):
     def create_manifold_parameter(manifold, shape, transpose=False):
         if manifold not in ManifoldShapeFactory.factories:
             raise NotImplementedError
-        return ManifoldShapeFactory.factories[manifold].create(
-                                                    shape, transpose)
+        return ManifoldShapeFactory.factories[manifold].create(shape, transpose)
 
     def __init__(self, manifold):
         self.manifold = manifold

@@ -105,7 +105,7 @@ class Adagrad(Optimizer):
                     rgrad = p.rgrad.data
                     state['sum'].add_(rgrad.pow(2))
                     std = state['sum'].sqrt().add_(1e-10)
-                    modified_rgrad = p.manifold.proj(p.data, rgrad/std)
+                    modified_rgrad = p.manifold.proj(p.data, rgrad / std)
                     p.data.add_(p.manifold.retr(p.data, -clr * modified_rgrad)
                                 - p.data)
         return loss
