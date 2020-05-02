@@ -17,6 +17,6 @@ pip install matplotlib
 pip install jupyter
 jupyter notebook # this will open jupyter notebook in the browser, where you can run and view the exisiting notebook files
 ```
-#References
+## References
 Some more great examples of using pytorch for image classification here -
 - https://github.com/bentrevett/pytorch-image-classification
