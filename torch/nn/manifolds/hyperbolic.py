@@ -108,5 +108,13 @@ class Hyperbolic(Manifold):
 
     def transp(self, x1, x2, d):
         return self.proj(x2, d)
+    
+    def _acosh(self, x):
+        return torch.log(x+(x**2-1)**0.5)
+
+    def dist(self, X, Y):
+        # arccosh(max (1,   -<X,Y>_L) )
+        linear_product = self._lorentz_scalar_product(X, Y)
+        return self._acosh(torch.max(linear_product, torch.ones_like(linear_product)))
 
     # TODO: inner, norm transp check
