@@ -1,6 +1,7 @@
 from .stiefel import Stiefel
 from .positive_definite import PositiveDefinite
 from .euclidean import Euclidean
+from .hyperbolic import Hyperbolic
 from ..parameter import Parameter
 
 class ManifoldShapeFactory(object):
@@ -113,8 +114,24 @@ class EuclideanManifoldFactory(ManifoldShapeFactory):
         else:
             return transpose, Parameter(manifold=self.manifold(*shape))
 
+class HyperbolicManifoldFactory(ManifoldShapeFactory):
+    """
+    Manifold factory for hyperbolic manifold
+    shape parameter of create without transpose
+    """
+    def create(self, shape, transpose=False):
+        if len(shape) == 1:
+            k, n = 1, shape
+        elif len(shape) == 2:
+            k, n = shape
+        else:
+            raise ValueError(("Invalid shape {}, length of shape"
+                             "tuple should be 1 or 2").format(shape))
+        return transpose, Parameter(manifold=self.manifold(n=n, k=k))
+
 
 create_manifold_parameter = ManifoldShapeFactory.create_manifold_parameter
 StiefelLikeFactory(Stiefel)
 SquareManifoldFactory(PositiveDefinite)
 EuclideanManifoldFactory(Euclidean)
+HyperbolicManifoldFactory(Hyperbolic)
