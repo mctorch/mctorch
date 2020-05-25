@@ -114,7 +114,7 @@ class Hyperbolic(Manifold):
 
     def dist(self, X, Y):
         # arccosh(max (1,   -<X,Y>_L) )
-        linear_product = self._lorentz_scalar_product(X, Y)
+        linear_product = -1 * self._lorentz_scalar_product(X, Y)
         return self._acosh(torch.max(linear_product, torch.ones_like(linear_product)))
 
     # TODO: inner, norm transp check
