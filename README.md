@@ -89,6 +89,7 @@ This would be an ever increasing list of features. McTorch currently supports:
 ### Manifolds
 - Stiefel
 - Positive Definite
+- Hyperbolic 
 
 All manifolds support k multiplier as well.
 
