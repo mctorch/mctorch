@@ -1,4 +1,4 @@
-# McTorch, a manifold optimization library for deep learning 
+# McTorch Lib, a manifold optimization library for deep learning 
 
 McTorch is a Python library that adds manifold optimization functionality to [PyTorch](https://github.com/pytorch/pytorch).  
 
@@ -22,20 +22,21 @@ McTorch builds on top of PyTorch and supports all PyTorch functions in addition 
 
 ### Using McTorch for Optimization
 
-1. **Initialize Parameter** - McTorch manifold parameters are same as PyTorch parameters (`torch.nn.Parameter`) and requires just addition of one property to parameter initialization to constrain the parameter values. 
+1. **Initialize Parameter** - McTorch manifold parameters are same as PyTorch parameters (`mctorch.nn.Parameter`) and requires just addition of one property to parameter initialization to constrain the parameter values. 
 2. **Define Cost** - Cost function can be any PyTorch function using the above parameter mixed with non constrained parameters.
-3. **Optimize** - Any optimizer from `torch.optim` can be used to optimize the cost function using same functionality as any PyTorch code.
+3. **Optimize** - Any optimizer from `mctorch.optim` can be used to optimize the cost function using same functionality as any PyTorch code.
 
 **PCA Example**
 ```python
 import torch
-import torch.nn as nn
+import mctorch.nn as mnn
+import mctorch.optim as moptim
 
 # Random data with high variance in first two dimension
 X = torch.diag(torch.FloatTensor([3,2,1])).matmul(torch.randn(3,200))
 
 # 1. Initialize Parameter
-manifold_param = nn.Parameter(manifold=nn.Stiefel(3,2))
+manifold_param = mnn.Parameter(manifold=mnn.Stiefel(3,2))
 
 # 2. Define Cost - squared reconstruction error
 def cost(X, w):
@@ -44,7 +45,7 @@ def cost(X, w):
     return torch.sum((X - wwTX)**2)
 
 # 3. Optimize
-optimizer = torch.optim.Adagrad(params = [manifold_param], lr=1e-2)
+optimizer = moptim.rAdagrad(params = [manifold_param], lr=1e-2)
 
 for epoch in range(30):
     cost_step = cost(X, manifold_param)
@@ -58,16 +59,16 @@ for epoch in range(30):
 **Multi Layer Perceptron Example**
 ```python
 import torch
-import torch.nn as nn
+import mctorch.nn as mnn
 import torch.nn.functional as F
 
 # a torch module using constrained linear layers
 class ManifoldMLP(nn.Module):
     def __init__(self):
         super(ManifoldMLP, self).__init__()
-        self.layer1 = nn.Linear(in_features=28*28, out_features=100, weight_manifold=nn.Stiefel)
-        self.layer2 = nn.Linear(in_features=100, out_features=100, weight_manifold=nn.PositiveDefinite)
-        self.output = nn.Linear(in_features=100, out_features=10, weight_manifold=nn.Stiefel)
+        self.layer1 = mnn.rLinear(in_features=28*28, out_features=100, weight_manifold=mnn.Stiefel)
+        self.layer2 = mnn.rLinear(in_features=100, out_features=100, weight_manifold=mnn.PositiveDefinite)
+        self.output = mnn.rLinear(in_features=100, out_features=10, weight_manifold=mnn.Stiefel)
 
     def forward(self, x):
         x = F.relu(self.layer1(x))
@@ -89,7 +90,7 @@ This would be an ever increasing list of features. McTorch currently supports:
 ### Manifolds
 - Stiefel
 - Positive Definite
-- Hyperbolic 
+- Hyperbolic
 
 All manifolds support k multiplier as well.
 
@@ -101,40 +102,20 @@ All manifolds support k multiplier as well.
 ### Layers
 - Linear
 - Conv1d, Conv2d, Conv3d
-- Conv1d\_transpose, Conv2d\_transpose, Conv3d\_transpose
-
 
 
 ## Installation
-This is same as PyTorch installation from source. I have tried the installation with Python 3.7 and it will be preferred version for installation.
-
-If you are installing from source, we highly recommend installing an Anaconda environment. 
-- Download  anaconda installer from here - [Anaconda](https://www.anaconda.com/download/) and follow GUI steps to install
-- Create an environment, from anaconda console prompt: ```conda create -n myenv python=3.7```
-- Activate the environment: ```source activate myenv```
-- Install current release branch i.e. ```mctorch_1_5```
+After installing PyTorch can be installed with `python setup.py install`
 
 ### Linux
 ```bash
 source activate myenv
-conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
+conda install numpy setuptools
 # Add LAPACK support for the GPU if needed
 conda install -c pytorch magma-cuda90 # or [magma-cuda80 | magma-cuda92 | magma-cuda100 ] depending on your cuda version
-pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_5
+conda install pytorch torchvision cudatoolkit=9.0 -c pytorch # or cudatoolkit=10.0 | cudatoolkit=10.1 | .. depending on your cuda version
+pip install mctorch-lib
 ```
-
-### Mac OS
-```bash
-source activate myenv
-conda install numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing
-MACOSX_DEPLOYMENT_TARGET=10.9 CC=clang CXX=clang++ pip install git+git://github.com/mctorch/mctorch.git@mctorch_1_5
-```
-
-### Installation FAQs
-1. ```ModuleNotFoundError: No module named 'torch._C'```: 
-After installation when using McTorch make sure you have activate the conda environment and not in the same folder as McTorch as ```import torch``` tries to refer to the module in torch folder and throws an error. 
-
-For other os and optional dependencies go through [Installation](pytorch-README.md#installation).
 
 ## Release and Contribution
 McTorch is currently under development and any contributions, suggestions and feature requests are welcome. We'd closely follow PyTorch stable versions to keep the base updated and will have our own versions for other additions.

@@ -1,6 +1,0 @@
-future
-numpy
-pyyaml
-requests
-setuptools
-six
