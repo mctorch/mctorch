@@ -4,6 +4,7 @@ from .stiefel import Stiefel
 from .positive_definite import PositiveDefinite
 from .euclidean import Euclidean
 from .hyperbolic import Hyperbolic
+from .doublystochastic import DoublyStochastic
 from ..parameter import Parameter
 
 class ManifoldShapeFactory(object):
@@ -132,11 +133,27 @@ class HyperbolicManifoldFactory(ManifoldShapeFactory):
         return transpose, Parameter(manifold=self.manifold(n=n, k=k))
 
 
+class DSManifoldFactory(ManifoldShapeFactory):
+    """
+    Manifold factory for DoublyStochastic manifold
+    """
+    def create(self, shape, transpose=False):
+        given = len(shape)
+        allowed = [2, 3]
+        assert given in allowed, ValueError(f"Shape should be in {allowed}")
+
+        n, m = shape[-2], shape[-1]
+        k = given == allowed[1] and shape[0] or 1
+
+        return transpose, Parameter(manifold=self.manifold(n=n, m=m, k=k))
+
+
 create_manifold_parameter = ManifoldShapeFactory.create_manifold_parameter
 StiefelLikeFactory(Stiefel)
 SquareManifoldFactory(PositiveDefinite)
 EuclideanManifoldFactory(Euclidean)
 HyperbolicManifoldFactory(Hyperbolic)
+DSManifoldFactory(DoublyStochastic)
 
 def manifold_random_(tensor):
     if not hasattr(tensor, 'manifold') or tensor.manifold is None:

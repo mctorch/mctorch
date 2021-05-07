@@ -124,6 +124,7 @@ McTorch is released under the open source [3-clause BSD License](LICENSE).
 
 ## Team 
 - [Mayank Meghwanshi](https://github.com/mayank127/)
+- [Satyadev Ntv](https://github.com/satyadevntv/)
 - [Bamdev Mishra](https://github.com/bamdevm)
 - [Pratik Jawanpuria](https://pratikjawanpuria.com)
 - [Hiroyuki Kasai](https://github.com/hiroyuki-kasai)
