@@ -95,9 +95,9 @@ This would be an ever increasing list of features. McTorch currently supports:
 All manifolds support k multiplier as well.
 
 ### Optimizers
-- SGD
-- Adagrad
-- ConjugateGradient
+- rSGD
+- rAdagrad
+- rConjugateGradient
 
 ### Layers
 - Linear
