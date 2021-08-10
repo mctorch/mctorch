@@ -98,6 +98,7 @@ All manifolds support k multiplier as well.
 ### Optimizers
 - rSGD
 - rAdagrad
+- rASA
 - rConjugateGradient
 
 ### Layers
